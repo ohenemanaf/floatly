@@ -1,0 +1,33 @@
+<Window x:Class="Floatly.Views.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Floatly Floating Button"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
+        ShowActivated="False" Width="78" Height="78" WindowStartupLocation="Manual">
+  <Canvas x:Name="Surface" Background="{x:Null}">
+    <Border x:Name="Bubble" Width="64" Height="64" CornerRadius="32"
+            Canvas.Left="7" Canvas.Top="7"
+            PreviewMouseLeftButtonDown="Bubble_Down"
+            PreviewMouseMove="Bubble_Move"
+            PreviewMouseLeftButtonUp="Bubble_Up"
+            MouseRightButtonUp="Bubble_RightClick"
+            Cursor="Hand" ToolTip="Floatly • Click to open • Drag to move • Right-click for options">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+          <GradientStop Color="#B5A5FF" Offset="0"/>
+          <GradientStop Color="#7461EB" Offset="0.7"/>
+          <GradientStop Color="#4F3AC5" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <Border.Effect>
+        <DropShadowEffect Color="#6553DD" BlurRadius="22" ShadowDepth="4" Opacity="0.68"/>
+      </Border.Effect>
+      <Grid>
+        <Ellipse Width="43" Height="43" Stroke="#AAFFFFFF" StrokeThickness="1.4" Opacity="0.85"/>
+        <TextBlock Text="✦" FontSize="27" Foreground="White" FontFamily="Segoe UI Symbol"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+  </Canvas>
+</Window>
