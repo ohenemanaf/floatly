@@ -37,6 +37,8 @@ public partial class ToolWindow : Window
     private TextBlock? _focusDisplay;
     private TextBlock? _sessionStats;
     private bool _startupReverting;
+    private (bool, bool, bool) _clockSignature;
+    private string? _lastCapture;
 
     public ToolWindow(string initialTool)
     {
@@ -51,6 +53,7 @@ public partial class ToolWindow : Window
         if (!_tools.Contains(tool)) tool = "Tasks";
         SavePendingNotes(releaseEditor: true);
         _currentTool = tool;
+        _clockSignature = ClockSignature();
         _timerDisplay = null; _stopwatchDisplay = null; _focusDisplay = null; _sessionStats = null;
         Navigation.Children.Clear();
         foreach (var name in _tools)
@@ -363,8 +366,17 @@ public partial class ToolWindow : Window
     }
 
     // ── Timer and stopwatch ─────────────────────────────────────────────────
+    private (bool, bool, bool) ClockSignature() => (_app.Clock.TimerRunning, _app.Clock.FocusRunning, _app.Clock.FocusIsBreak);
+
     private void UpdateClocks()
     {
+        // A countdown or session that ends on its own must also refresh the
+        // Start/Pause buttons and the focus/break heading, not only the digits.
+        if (_currentTool is "Timer" or "Focus" && _clockSignature != ClockSignature())
+        {
+            ShowTool(_currentTool);
+            return;
+        }
         if (_timerDisplay is not null) _timerDisplay.Text = Format(_app.Clock.TimerRemaining);
         if (_stopwatchDisplay is not null) _stopwatchDisplay.Text = Format(_app.Clock.StopwatchElapsed);
         if (_focusDisplay is not null) _focusDisplay.Text = Format(_app.Clock.FocusRemaining);
@@ -459,6 +471,8 @@ public partial class ToolWindow : Window
             var folder = Path.Combine(pictures, "Floatly Captures");
             Directory.CreateDirectory(folder); Launch(folder);
         }));
+        if (_lastCapture is not null)
+            ContentPanel.Children.Add(Label("Saved: " + _lastCapture, 12, "#7FE0B4"));
         ContentPanel.Children.Add(Label("Screen images are saved as PNG files in Pictures\\Floatly Captures. Region selection uses the primary monitor.", 12, "#9EAAC7"));
     }
 
@@ -490,15 +504,16 @@ public partial class ToolWindow : Window
         }
         if (path is not null)
         {
+            _lastCapture = path;
             _app.Notify("Screenshot saved", Path.GetFileName(path));
-            MessageBox.Show("Screenshot saved to:\n" + path, "Floatly", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (_currentTool == "Screenshot") ShowTool("Screenshot");
         }
     }
 
     // ── Calculator ──────────────────────────────────────────────────────────
     private void BuildCalculator()
     {
-        var expression = Input();
+        var expression = Input(height: 48); // the default 39 clips 20pt text
         expression.FontSize = 20;
         expression.ToolTip = "Enter arithmetic using + - * / and parentheses";
         ContentPanel.Children.Add(expression);
@@ -571,12 +586,12 @@ public partial class ToolWindow : Window
         {
             _app.State.BubbleOpacity = opacity.Value;
             _app.Overlay.SetBubbleOpacity(opacity.Value);
-            _app.Save();
+            _app.SaveSoon();
         };
         ContentPanel.Children.Add(Label("Floating button opacity", 12)); ContentPanel.Children.Add(opacity);
         var size = new Slider { Minimum = 48, Maximum = 72, TickFrequency = 4, IsSnapToTickEnabled = true,
             Value = _app.State.BubbleSize, Margin = new Thickness(0, 0, 0, 13) };
-        size.ValueChanged += (_, _) => { _app.Overlay.SetBubbleSize((int)size.Value); _app.Save(); };
+        size.ValueChanged += (_, _) => { _app.Overlay.SetBubbleSize((int)size.Value); _app.SaveSoon(); };
         ContentPanel.Children.Add(Label("Floating button size", 12)); ContentPanel.Children.Add(size);
         var motion = new CheckBox { Content = "Reduce menu animations", IsChecked = _app.State.ReduceMotion };
         motion.Checked += (_, _) => { _app.State.ReduceMotion = true; _app.Save(); };
@@ -588,7 +603,12 @@ public partial class ToolWindow : Window
         startup.Unchecked += (_, _) => ToggleStartup(false, startup);
         ContentPanel.Children.Add(startup);
         var hotkey = new CheckBox { Content = "Ctrl + Alt + Space opens Floatly", IsChecked = _app.State.HotkeyEnabled };
-        hotkey.Checked += (_, _) => { _app.State.HotkeyEnabled = true; _app.Overlay.RefreshHotkey(); _app.Save(); };
+        hotkey.Checked += (_, _) =>
+        {
+            _app.State.HotkeyEnabled = true; _app.Save();
+            if (!_app.Overlay.RefreshHotkey())
+                Error("Ctrl + Alt + Space is already used by another program, so Floatly cannot use it right now.");
+        };
         hotkey.Unchecked += (_, _) => { _app.State.HotkeyEnabled = false; _app.Overlay.RefreshHotkey(); _app.Save(); };
         ContentPanel.Children.Add(hotkey);
         ContentPanel.Children.Add(Label("Data and privacy", 16, "#BBAEFF"));

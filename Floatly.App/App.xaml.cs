@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Floatly.Models;
 using Floatly.Services;
 using Floatly.Views;
@@ -14,6 +15,8 @@ public partial class App : System.Windows.Application
 {
     private Mutex? _singleInstance;
     private System.Windows.Forms.NotifyIcon? _tray;
+    private bool _stateLoaded;
+    private DispatcherTimer? _saveSoon;
     public StorageService Storage { get; } = new();
     public AppState State { get; private set; } = new();
     public ClockService Clock { get; private set; } = null!;
@@ -34,7 +37,20 @@ public partial class App : System.Windows.Application
             Shutdown(); return;
         }
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        DispatcherUnhandledException += (_, args) =>
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(Storage.Folder, "errors.log"),
+                    DateTime.Now + Environment.NewLine + args.Exception + Environment.NewLine + Environment.NewLine);
+            }
+            catch { }
+            System.Windows.MessageBox.Show("Floatly encountered an error. A diagnostic log was saved in its local data folder.\n\n" + args.Exception.Message,
+                "Floatly", MessageBoxButton.OK, MessageBoxImage.Error);
+            args.Handled = true;
+        };
         State = Storage.Load();
+        _stateLoaded = true;
         ApplyTheme();
         Clock = new ClockService(State.FocusMinutes, State.BreakMinutes, State.CompletedFocusSessions);
         Clock.Alert += (title, message) => { Notify(title, message); System.Media.SystemSounds.Asterisk.Play(); };
@@ -63,18 +79,6 @@ public partial class App : System.Windows.Application
         menu.Items.Add("Exit Floatly", null, (_, _) => Dispatcher.Invoke(Shutdown));
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(() => Overlay.ShowAndActivate());
-        DispatcherUnhandledException += (_, args) =>
-        {
-            try
-            {
-                File.AppendAllText(Path.Combine(Storage.Folder, "errors.log"),
-                    DateTime.Now + Environment.NewLine + args.Exception + Environment.NewLine + Environment.NewLine);
-            }
-            catch { }
-            System.Windows.MessageBox.Show("Floatly encountered an error. A diagnostic log was saved in its local data folder.\n\n" + args.Exception.Message,
-                "Floatly", MessageBoxButton.OK, MessageBoxImage.Error);
-            args.Handled = true;
-        };
     }
 
     public void ApplyTheme()
@@ -84,7 +88,25 @@ public partial class App : System.Windows.Application
         if (Overlay is not null) Overlay.RefreshStyle();
     }
 
-    public void Save() => Storage.Save(State);
+    public void Save()
+    {
+        _saveSoon?.Stop();
+        // Never write before the saved state was loaded: a second instance exits
+        // early with an empty default state and would otherwise wipe the real data.
+        if (_stateLoaded) Storage.Save(State);
+    }
+
+    // For values that change many times a second (sliders): one write after changes settle.
+    public void SaveSoon()
+    {
+        if (_saveSoon is null)
+        {
+            _saveSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+            _saveSoon.Tick += (_, _) => Save();
+        }
+        _saveSoon.Stop();
+        _saveSoon.Start();
+    }
 
     // Session-only opt-in. Default OFF every launch; do not silently collect clipboard contents.
     public void SaveClipboardSnapshot()

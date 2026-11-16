@@ -23,6 +23,7 @@ public partial class OverlayWindow : Window
     private const double Center = MenuSize / 2;
     private double Small => Math.Max(78, ((App)System.Windows.Application.Current).State.BubbleSize + 14);
     private bool _expanded;
+    private double _restLeft, _restTop; // bubble position to return to when the menu closes
     private int _page;
     private Point _startMouse;
     private Point _startWindow;
@@ -50,13 +51,15 @@ public partial class OverlayWindow : Window
         Canvas.SetTop(Bubble, (Small - state.BubbleSize) / 2);
         Bubble.Width = state.BubbleSize; Bubble.Height = state.BubbleSize;
         Bubble.CornerRadius = new CornerRadius(state.BubbleSize / 2);
+        // (-1, -1) means "never placed". Other negative values are valid: a monitor
+        // left of or above the primary one has negative coordinates.
+        bool placed = !(state.BubbleLeft == -1 && state.BubbleTop == -1);
         var area = SystemParameters.WorkArea;
-        Left = state.BubbleLeft >= 0 ? state.BubbleLeft : area.Right - Small - 12;
-        Top = state.BubbleTop >= 0 ? state.BubbleTop : area.Top + area.Height / 2 - Small / 2;
-        Left = Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width));
-        Top = Math.Clamp(Top, area.Top, Math.Max(area.Top, area.Bottom - Height));
-        state.BubbleLeft = Left; state.BubbleTop = Top;
+        Left = placed ? state.BubbleLeft : area.Right - Small - 12;
+        Top = placed ? state.BubbleTop : area.Top + area.Height / 2 - Small / 2;
         RefreshStyle();
+        // Clicking anywhere else closes the open menu.
+        Deactivated += (_, _) => Collapse();
         SourceInitialized += (_, _) =>
         {
             _source = (HwndSource)PresentationSource.FromVisual(this);
@@ -98,9 +101,10 @@ public partial class OverlayWindow : Window
         return _clipboardListening == enabled;
     }
 
-    public void RefreshHotkey()
+    // False only when the hotkey is wanted but Windows refused it (another program owns it).
+    public bool RefreshHotkey()
     {
-        if (_source is null) return;
+        if (_source is null) return true;
         if (_hotkeyRegistered)
         {
             UnregisterHotKey(_source.Handle, HotkeyId);
@@ -110,7 +114,9 @@ public partial class OverlayWindow : Window
         {
             // MOD_CONTROL (0x2) + MOD_ALT (0x1) + MOD_NOREPEAT (0x4000), VK_SPACE (0x20)
             _hotkeyRegistered = RegisterHotKey(_source.Handle, HotkeyId, 0x4003, 0x20);
+            return _hotkeyRegistered;
         }
+        return true;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -263,6 +269,7 @@ public partial class OverlayWindow : Window
     {
         if (_expanded) return;
         _expanded = true;
+        _restLeft = Left; _restTop = Top;
         var currentCenterX = Left + Small / 2;
         var currentCenterY = Top + Small / 2;
         var area = CurrentWorkArea();
@@ -270,6 +277,7 @@ public partial class OverlayWindow : Window
         Left = Math.Clamp(currentCenterX - Center, area.Left, Math.Max(area.Left, area.Right - MenuSize));
         Top = Math.Clamp(currentCenterY - Center, area.Top, Math.Max(area.Top, area.Bottom - MenuSize));
         DrawMenu();
+        Activate(); // so that clicking another window deactivates and closes the menu
     }
 
     private void Collapse()
@@ -280,8 +288,7 @@ public partial class OverlayWindow : Window
         Surface.Children.Add(Bubble);
         var state = ((App)System.Windows.Application.Current).State;
         Width = Small; Height = Small;
-        Left = state.BubbleLeft >= 0 ? state.BubbleLeft : Left + Center - Small / 2;
-        Top = state.BubbleTop >= 0 ? state.BubbleTop : Top + Center - Small / 2;
+        Left = _restLeft; Top = _restTop;
         Canvas.SetLeft(Bubble, (Small - state.BubbleSize) / 2);
         Canvas.SetTop(Bubble, (Small - state.BubbleSize) / 2);
         ClampToVisibleArea();
@@ -300,19 +307,24 @@ public partial class OverlayWindow : Window
         };
         back.MouseLeftButtonUp += (_, _) => Collapse();
         Canvas.SetLeft(back, 7.5); Canvas.SetTop(back, 7.5); Surface.Children.Add(back);
-        var label = new TextBlock { Text = _page == 0 ? "YOUR ESSENTIALS" : "MORE TOOLS", Foreground = Brushes.LightGray,
-            FontSize = 10, FontWeight = FontWeights.SemiBold, Opacity = .78, IsHitTestVisible = false };
-        Canvas.SetLeft(label, Center - 46); Canvas.SetTop(label, 32); Surface.Children.Add(label);
+        // Layout (offsets from the centre): tools on a 110 ring, the More pill just under
+        // the bubble in the gap between the two lower tools, the page label below them.
+        var label = new TextBlock { Text = _page == 0 ? "YOUR ESSENTIALS  •  1/2" : "MORE TOOLS  •  2/2", Foreground = Brushes.LightGray,
+            FontSize = 10, FontWeight = FontWeights.SemiBold, Opacity = .78, IsHitTestVisible = false,
+            Width = MenuSize, TextAlignment = TextAlignment.Center };
+        Canvas.SetLeft(label, 0); Canvas.SetTop(label, Center + 128); Surface.Children.Add(label);
+        var idle = new SolidColorBrush(Color.FromRgb(44, 49, 76));
+        var hover = new SolidColorBrush(Color.FromRgb(62, 68, 104));
         var tools = _pages[_page];
         for (int i = 0; i < tools.Length; i++)
         {
             var tool = tools[i];
             double angle = (-90 + 72 * i) * Math.PI / 180;
-            const double radius = 112;
+            const double radius = 110;
             var button = new Button
             {
-                Width = 83, Height = 65,
-                Background = new SolidColorBrush(Color.FromRgb(44, 49, 76)),
+                Width = 76, Height = 58,
+                Background = idle,
                 BorderThickness = new Thickness(0), Foreground = Brushes.White,
                 Cursor = Cursors.Hand, ToolTip = "Open " + tool.label,
                 Opacity = ((App)System.Windows.Application.Current).State.ReduceMotion ? 1 : 0,
@@ -321,12 +333,14 @@ public partial class OverlayWindow : Window
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                     Children =
                     {
-                        new TextBlock { Text = tool.icon, FontSize = 22, FontFamily = new FontFamily("Segoe UI Symbol"), HorizontalAlignment = HorizontalAlignment.Center },
-                        new TextBlock { Text = tool.label, FontSize = 11, Margin = new Thickness(0, 3, 0, 0), HorizontalAlignment = HorizontalAlignment.Center }
+                        new TextBlock { Text = tool.icon, FontSize = 19, FontFamily = new FontFamily("Segoe UI Symbol"), HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = tool.label, FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Center }
                     }
                 }
             };
             button.Template = RoundedButtonTemplate(16);
+            button.MouseEnter += (_, _) => button.Background = hover;
+            button.MouseLeave += (_, _) => button.Background = idle;
             button.Click += (_, _) => ShowToolWindow(tool.label);
             Canvas.SetLeft(button, Center + Math.Cos(angle) * radius - button.Width / 2);
             Canvas.SetTop(button, Center + Math.Sin(angle) * radius - button.Height / 2);
@@ -336,13 +350,14 @@ public partial class OverlayWindow : Window
         }
         var more = new Button
         {
-            Content = _page == 0 ? "More  ›" : "‹  Back",
+            Content = _page == 0 ? "More ›" : "‹ Back",
             Background = new SolidColorBrush(Color.FromRgb(69, 55, 118)), Foreground = Brushes.White,
-            BorderThickness = new Thickness(0), Width = 94, Height = 31,
-            Cursor = Cursors.Hand, FontSize = 12, Template = RoundedButtonTemplate(14)
+            BorderThickness = new Thickness(0), Width = 52, Height = 26,
+            Cursor = Cursors.Hand, FontSize = 11, Template = RoundedButtonTemplate(13),
+            ToolTip = _page == 0 ? "Show five more tools" : "Back to the first five tools"
         };
         more.Click += (_, _) => { _page = 1 - _page; DrawMenu(); };
-        Canvas.SetLeft(more, Center - 47); Canvas.SetTop(more, Center + 53); Surface.Children.Add(more);
+        Canvas.SetLeft(more, Center - 26); Canvas.SetTop(more, Center + 42); Surface.Children.Add(more);
         Surface.Children.Add(Bubble);
         Canvas.SetLeft(Bubble, Center - Bubble.Width / 2);
         Canvas.SetTop(Bubble, Center - Bubble.Height / 2);
