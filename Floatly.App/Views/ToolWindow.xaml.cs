@@ -443,7 +443,8 @@ public partial class ToolWindow : Window
         {
             Text = note.Content, Tag = "Write here…", AcceptsReturn = true, AcceptsTab = true,
             TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Height = 330, VerticalContentAlignment = VerticalAlignment.Stretch, Margin = new Thickness(0, 0, 0, 8)
+            Height = 330, VerticalContentAlignment = VerticalAlignment.Stretch, Margin = new Thickness(0, 0, 0, 8),
+            Padding = new Thickness(10, 8, 10, 8) // multi-line: keep breathing room above the first line
         };
         _noteTitle.TextChanged += (_, _) => { _noteAutosave.Stop(); _noteAutosave.Start(); };
         _noteEditor.TextChanged += (_, _) => { _noteAutosave.Stop(); _noteAutosave.Start(); };

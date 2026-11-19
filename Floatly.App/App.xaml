@@ -163,7 +163,9 @@
       <Setter Property="SelectionBrush" Value="{DynamicResource AccentBrush}"/>
       <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
       <Setter Property="FontSize" Value="12.5"/>
-      <Setter Property="Padding" Value="10,7"/>
+      <!-- No vertical padding: single-line boxes are fixed-height and centre their text, and
+           vertical padding there squeezes the text area until typed text is clipped away. -->
+      <Setter Property="Padding" Value="10,0"/>
       <Setter Property="VerticalContentAlignment" Value="Center"/>
       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
@@ -176,7 +178,8 @@
                            Foreground="#7F8BAE" Margin="{TemplateBinding Padding}" Padding="2,0,0,0"
                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                            IsHitTestVisible="False" Visibility="Collapsed"/>
-                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                <!-- TextBox already passes its Padding to the content host, so no Margin here. -->
+                <ScrollViewer x:Name="PART_ContentHost"
                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
               </Grid>
             </Border>
