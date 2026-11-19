@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo =====================================================
-echo  FLOATLY  ^|  Build and Run  ^|  No Codex Required
+echo  FLOATLY  ^|  Build and Run
  echo =====================================================
 where dotnet >nul 2>nul
 if errorlevel 1 (
@@ -22,7 +22,7 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Starting Floatly. Look for a purple floating button.
+echo Starting Floatly. Look for the floating button at the edge of your screen.
 echo Closing this terminal does not necessarily exit Floatly. Use its tray icon to exit.
 dotnet run --no-build -c Debug --project "Floatly.App\Floatly.App.csproj"
 if errorlevel 1 (

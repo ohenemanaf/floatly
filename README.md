@@ -1,101 +1,111 @@
-# FLOATLY — Offline AssistiveTouch for Windows
+<div align="center">
 
-**Native desktop application source code. No Codex, no login, no API key, no account, no web backend.**
+<img src="docs/images/icon.png" width="96" alt="Floatly icon">
 
-Floatly is a small movable floating button that sits over ordinary Windows applications. Clicking it opens a polished radial menu with two pages and 10 useful tools. Data is stored in local JSON files. The UI is built in C# / WPF with .NET 10.
+# Floatly
 
-> **Build status:** Builds with 0 warnings and 0 errors on Windows 11 with .NET SDK 10.0.404, and the 13 logic tests pass. The items in `docs/TEST-CHECKLIST.md` still need to be ticked off by hand on a real desktop.
+**A floating glass button for Windows that puts ten everyday tools one click away.**
 
-## What works in the source
+Tasks · Notes · Launcher · Timer · Focus · Clipboard · Screenshot · Calculator · System · Settings
 
-| Tool | Implemented functionality |
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?style=flat-square)
+![.NET](https://img.shields.io/badge/.NET-10-512BD4?style=flat-square)
+![UI](https://img.shields.io/badge/UI-WPF-6E56CF?style=flat-square)
+![Offline](https://img.shields.io/badge/works-offline-2EA043?style=flat-square)
+
+<img src="docs/images/floatly-hero.png" alt="Floatly ring menu and Tasks panel" width="860">
+
+</div>
+
+## What it is
+
+Floatly sits at the edge of your screen as a small liquid-glass button. Click it and all ten tools fan out around it in one ring. Pick one and a compact glass panel opens beside the button. There are no pages to flip through and no account to create, and nothing leaves your PC.
+
+## Features
+
+| Tool | What you can do |
 |---|---|
-| To-do List | Add, complete, delete; optional due date, priority and status filters; saved locally |
-| Quick Notes | Create multiple notes; edit titles and content, search, autosave, delete; saved locally |
-| App Launcher | Launch Windows basics; add/remove file, folder and web shortcuts; choose from dialogs |
-| Timer & Stopwatch | Start, pause, reset; presets; shared clock service continues while tool panel is hidden |
-| Clipboard History | Save copied text manually, copy again, remove, clear; optional *session-only* automatic text history (OFF by default) |
-| Screenshot Tool | Save PNG of primary display or full virtual desktop; drag-select a region on primary display |
-| Calculator | On-screen arithmetic keypad, keyboard expressions, safe calculation parser, last 15 results |
-| Settings | Accent theme, opacity, button size, animation preference, hotkey and login startup, backup export |
-| System Controls | Volume up/down/mute, Windows Wi-Fi/Bluetooth/Display/Sound/Power settings, Task Manager |
-| Focus Sessions | Work/break countdowns, configurable duration, completed session count, desktop tray notification |
+| **Tasks** | Add with Enter, pick a due date and priority with one tap, filter by Active, Done, Today or Overdue |
+| **Notes** | A searchable list of notes; open one to write, and it saves as you type |
+| **Launcher** | Open Notepad, Explorer, Paint or Task Manager, or pin your own apps, files, folders and links |
+| **Timer** | Countdown with 1, 5, 15, 30 and 60 minute presets, plus a stopwatch; keeps running when the panel is hidden |
+| **Focus** | Work and break sessions with your own lengths, a desktop notification at the end, and a session count |
+| **Clipboard** | Save copied text on demand, or let it collect what you copy for the current session (off by default) |
+| **Screenshot** | Capture a selected area, one screen or all screens to `Pictures\Floatly Captures` |
+| **Calculator** | Keypad or keyboard input with proper operator order and brackets, plus your last results |
+| **System** | Volume and mute, plus shortcuts to Wi-Fi, Bluetooth, Display, Night light, Sound and Power settings |
+| **Settings** | Accent colour, button size and opacity, reduce motion, start with Windows, hotkey, backup export |
 
-Other features: system tray (show, hide, exit), drag with edge snapping, always-on-top over ordinary windows, optional Ctrl+Alt+Space hotkey, single-instance enforcement, local backups and recovery.
+**Around the tools**
 
-## What YOU need to do manually
+- Drag the button anywhere; it snaps to the nearest screen edge and remembers its place, on any monitor.
+- Press **Ctrl + Alt + Space** from any app to open the ring.
+- Right-click the button, or use the tray icon, to hide it, open Settings or exit.
+- Only one copy runs at a time, and it is always on top of ordinary windows.
 
-1. **Use a Windows 10/11 computer** (64-bit Windows recommended). Windows is required to compile and run the WPF interface.
-2. **Install .NET 10 SDK** (free, one-time): https://dotnet.microsoft.com/download/dotnet/10.0 — choose the SDK, *not only the desktop runtime*. Restart PowerShell after installing.
-3. **Unzip this project.** Open the folder named `Floatly`.
-4. **Double-click `01-BUILD-AND-RUN.bat`.** It builds the code and opens Floatly. The purple circle should appear near the right edge of the screen. No Codex needed.
-5. Once it works, **double-click `03-RUN-LOGIC-TESTS.bat`** to run calculation, storage and timer checks.
-6. **Double-click `02-CREATE-PORTABLE-EXE.bat`** to build a self-contained Windows release in `out\Floatly-win-x64`.
-7. Optional: **double-click `04-INSTALL-LOCALLY.bat`** to copy the published files into your local Apps folder and create a Windows Start shortcut. No administrator account is needed.
-8. If you want the floating button after each reboot, open **Floatly → Settings → Start automatically after Windows sign-in**. This uses your account's Windows startup registry entry and is OFF until you enable it.
+## Design
 
-If Windows blocks `.bat` files from an internet ZIP, extract the archive first, inspect the scripts, and run the documented commands directly in Windows PowerShell. You do not need to disable antivirus or Windows security protections.
+- **Liquid glass.** The button is a lit glass orb that stretches when you press it, springs back with a small wobble, and has a highlight that drifts across it while you hover. The ring is a frosted disc that blurs whatever is behind it.
+- **One step to any tool.** All ten tools sit on a single ring, and the panel has an icon rail, so switching tools is always one click.
+- **Quiet panel.** On Windows 11 the panel uses the system's acrylic blur; Windows 10 gets the same layout on a solid dark surface. Messages appear as small notices inside the panel instead of pop-up dialogs, and deleting something asks for a second click.
+- **Type and icons.** Text is set in [Manrope](https://github.com/googlefonts/manrope) and icons are from [Lucide](https://lucide.dev), drawn as vectors so they stay sharp at any display scaling.
+- **Reduce motion** in Settings turns off every animation.
 
-## Commands you can run in PowerShell instead
+## Get started
 
-From the extracted `Floatly` folder:
+You need Windows 10 or 11 (64-bit) and the free [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
 ```powershell
-dotnet --info
-dotnet build .\Floatly.App\Floatly.App.csproj
+git clone https://github.com/ohenemanaf/floatly.git
+cd floatly
 dotnet run --project .\Floatly.App\Floatly.App.csproj
-dotnet run --project .\Floatly.LogicTests\Floatly.LogicTests.csproj
-dotnet publish .\Floatly.App\Floatly.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .\out\Floatly-win-x64
 ```
 
-`dotnet build` might download the required .NET build references using official NuGet feeds during the first restore; the **finished Floatly app itself has no network dependency**, and there are no third-party NuGet packages in this project.
+Or double-click the scripts in the project folder:
 
-## How to use
+| Script | What it does |
+|---|---|
+| `01-BUILD-AND-RUN.bat` | Builds Floatly and starts it |
+| `02-CREATE-PORTABLE-EXE.bat` | Builds a single self-contained `Floatly.exe` in `out\Floatly-win-x64` |
+| `03-RUN-LOGIC-TESTS.bat` | Runs the calculator, storage and timer checks |
+| `04-INSTALL-LOCALLY.bat` | Copies the portable build to your user Apps folder and adds a Start menu shortcut (no admin rights needed) |
+| `05-UNINSTALL-LOCAL.bat` | Removes that install and its startup entry; your notes and tasks are kept |
 
-- **Click** the floating button to expand its menu; select a tool.
-- Select **More** for the other five tools.
-- **Drag** the button to reposition it (it snaps to the closest left/right edge).
-- **Right-click** the button for Settings, Hide and Exit.
-- **Ctrl+Alt+Space** toggles the menu (when enabled and not claimed by another program).
-- **×** on the tools panel hides the panel but keeps Floatly running.
-- Use the **system tray icon** to restore the button, open Tasks/Notes, or fully exit.
+**Start with Windows** only works from the published `.exe`, not from a debug build. Run `02` and `04` first, then switch it on in Settings.
 
-## User data & privacy
+## Your data
 
-- Tasks, notes, bookmarks, manually/optionally captured clipboard text and preferences are stored as readable JSON at `%LOCALAPPDATA%\Floatly\state.json`. These files are **not encrypted**; never save passwords or authentication codes.
-- Prior state is backed up to `state.backup.json` when a newer state is saved. Damaged JSON is moved aside for recovery; there is an **Export backup** button in Settings.
-- Clipboard **auto-capture is session-only and OFF at launch**. Turning it on captures copied text as you work, which can contain sensitive data. Floatly cannot reliably tell which text is a password, so leave it off unless you accept that risk. Use Clear saved entries to delete history.
-- Screenshots are user-initiated, stored locally at `Pictures\Floatly Captures`, and never uploaded.
-- No AI, telemetry, analytics, account sign-in, cloud service or API keys.
-- Screenshots and on-screen overlays cannot appear on secure Windows desktops and may not appear over exclusive-fullscreen games. **Always on top** is for ordinary Windows applications.
+- Everything is stored as readable JSON in `%LOCALAPPDATA%\Floatly\state.json`, with the previous version kept as `state.backup.json`. If the file is ever damaged, Floatly sets it aside and restores the backup.
+- Data is **not encrypted**, so don't keep passwords in notes or the clipboard history.
+- Clipboard collection is **off every time Floatly starts** and only runs when you switch it on.
+- Screenshots are only taken when you ask and stay in `Pictures\Floatly Captures`.
+- No network access, telemetry, accounts or API keys.
 
-## Known limitations & honest boundaries
-
-- The UI, multi-monitor display-scaling edge cases, fullscreen behavior, keyboard shortcut conflicts, installer workflow, and hardware-specific Windows controls need real Windows testing.
-- Drag-select screenshot regions support the **primary monitor**; full-desktop screenshot capture includes all monitors.
-- A brightness slider is not implemented because it is device-dependent; the System page opens Windows Display settings.
-- `Topmost` is not a security bypass and does not guarantee visibility over a protected or exclusive-fullscreen surface.
-- The project outputs a Windows `.exe` on your computer after `dotnet publish`; an executable cannot be prebuilt or validated in this Linux environment.
-- The optional install scripts create user-local shortcuts; this is not a signed MSIX/MSI installer. Before public distribution, consider code signing and a formal installer.
-- Startup from an unpublished Debug build is deliberately disallowed. Publish and install first.
-
-## Folder structure
+## Project layout
 
 ```text
-Floatly/
-  01-BUILD-AND-RUN.bat          One-click build and launch
-  02-CREATE-PORTABLE-EXE.bat    Build standalone Windows release
-  03-RUN-LOGIC-TESTS.bat        Run included tests
-  04-INSTALL-LOCALLY.bat        Optional user-local install
-  05-UNINSTALL-LOCAL.bat        Optional uninstall, preserving your data
-  Floatly.App/
-    Assets/Floatly.ico         App icon
-    Models/                    Persistent task, notes and preference models
-    Services/                  Storage, calculator, screenshot, timer, startup
-    Views/                     Floating radial menu, tool panel, region selector
-    App.xaml                   Appearance resources
-    App.xaml.cs                Application lifecycle and tray
-  Floatly.LogicTests/          Logic checks without external test packages
-  scripts/                     User-local installation helpers
-  docs/                        Windows testing and troubleshooting
+Floatly.App/
+  App.xaml(.cs)           Shared styles, tray icon, app lifecycle
+  Views/OverlayWindow     Floating button and ring menu
+  Views/ToolWindow        Glass panel with the ten tools
+  Views/RegionSelectWindow  Drag-to-select screenshot area
+  Views/Icons.cs          Lucide icon paths
+  Services/               Storage, calculator, clock, screenshot, startup
+  Models/AppState.cs      Everything that gets saved
+  Assets/                 App icon and Manrope font files
+Floatly.LogicTests/       Dependency-free logic checks
+scripts/                  Local install and uninstall
+docs/                     Test checklist and README images
 ```
+
+## Known limits
+
+- Area selection works on the main monitor; "All screens" captures every monitor.
+- Like any normal window, Floatly can't appear over exclusive-fullscreen games or secure Windows screens.
+- There is no brightness slider because monitor support varies; the System tool opens Display settings instead.
+- The local install is not a signed installer. Sign the build before sharing it widely.
+
+## Credits
+
+- [Manrope](https://github.com/googlefonts/manrope) by Mikhail Sharanda, under the SIL Open Font License (`Floatly.App/Assets/Fonts/OFL.txt`).
+- [Lucide](https://lucide.dev) icons, under the ISC License (`Floatly.App/Assets/LUCIDE-LICENSE.txt`).

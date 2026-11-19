@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -7,9 +6,13 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Floatly.Models;
 using Floatly.Services;
@@ -18,67 +21,97 @@ using Floatly.Services;
 using TextBox = System.Windows.Controls.TextBox;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
+using RadioButton = System.Windows.Controls.RadioButton;
+using Color = System.Windows.Media.Color;
+using Cursors = System.Windows.Input.Cursors;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
 
 namespace Floatly.Views;
 
 public partial class ToolWindow : Window
 {
     private readonly App _app = (App)System.Windows.Application.Current;
-    private readonly string[] _tools = { "Tasks", "Notes", "Launcher", "Timer", "Clipboard", "Screenshot", "Calculator", "Settings", "System", "Focus" };
-    private string _currentTool = "Tasks";
+    private string _currentTool = "";
     private string _taskFilter = "All";
+    private int _newDue;                      // index into DueChoices for the task being typed
+    private string _newPriority = "Normal";
     private string _noteSearch = "";
+    private Guid? _openNote;                  // note shown in the editor; null shows the list
     private NoteItem? _editingNote;
     private TextBox? _noteEditor;
     private TextBox? _noteTitle;
     private readonly DispatcherTimer _noteAutosave = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(2.4) };
     private TextBlock? _timerDisplay;
     private TextBlock? _stopwatchDisplay;
     private TextBlock? _focusDisplay;
     private TextBlock? _sessionStats;
+    private int _timerMinutes = 5;            // what Reset returns the countdown to
     private bool _startupReverting;
     private (bool, bool, bool) _clockSignature;
     private string? _lastCapture;
 
+    private static readonly string[] DueChoices = { "No date", "Today", "Tomorrow", "Next week" };
+    private static readonly string[] Priorities = { "Normal", "Important", "Urgent" };
+    private static readonly string[] TaskFilters = { "All", "Active", "Done", "Today", "Overdue" };
+
     public ToolWindow(string initialTool)
     {
         InitializeComponent();
+        CloseButton.Tag = Icons.Geometry(Icons.Close);
+        SourceInitialized += (_, _) => ApplyGlass();
         _noteAutosave.Tick += (_, _) => SavePendingNotes();
+        _toastTimer.Tick += (_, _) =>
+        {
+            _toastTimer.Stop();
+            ToastHost.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(220)));
+        };
         _app.Clock.Changed += UpdateClocks;
         ShowTool(initialTool);
     }
 
+    // ── Glass window ────────────────────────────────────────────────────────
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")]
+    private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+
+    // Windows 11 22H2+ can draw a live blurred backdrop behind the window. Older systems
+    // get the same layout on a solid dark surface.
+    private void ApplyGlass()
+    {
+        bool glass = false;
+        IntPtr handle = new WindowInteropHelper(this).Handle;
+        // The extended frame would otherwise draw Windows' own minimise/maximise/close
+        // buttons over the panel. Dropping the system menu style removes them.
+        const int GwlStyle = -16, WsSysMenu = 0x80000, WsMinimizeBox = 0x20000, WsMaximizeBox = 0x10000;
+        SetWindowLong(handle, GwlStyle, GetWindowLong(handle, GwlStyle) & ~(WsSysMenu | WsMinimizeBox | WsMaximizeBox));
+        if (Environment.OSVersion.Version.Build >= 22621 && HwndSource.FromHwnd(handle)?.CompositionTarget is { } target)
+        {
+            target.BackgroundColor = Colors.Transparent;
+            int darkMode = 1, roundCorners = 2, acrylic = 3;
+            DwmSetWindowAttribute(handle, 20, ref darkMode, sizeof(int));      // DWMWA_USE_IMMERSIVE_DARK_MODE
+            DwmSetWindowAttribute(handle, 33, ref roundCorners, sizeof(int));  // DWMWA_WINDOW_CORNER_PREFERENCE
+            glass = DwmSetWindowAttribute(handle, 38, ref acrylic, sizeof(int)) == 0; // DWMWA_SYSTEMBACKDROP_TYPE
+        }
+        if (!glass) Tint.Background = Brush("#171A27");
+    }
+
+    // ── Navigation ──────────────────────────────────────────────────────────
     public void ShowTool(string tool)
     {
-        if (!_tools.Contains(tool)) tool = "Tasks";
+        if (!Icons.Tools.Any(t => t.Name == tool)) tool = "Tasks";
+        bool switched = tool != _currentTool;
         SavePendingNotes(releaseEditor: true);
+        if (switched) _openNote = null;
         _currentTool = tool;
         _clockSignature = ClockSignature();
         _timerDisplay = null; _stopwatchDisplay = null; _focusDisplay = null; _sessionStats = null;
-        Navigation.Children.Clear();
-        foreach (var name in _tools)
-        {
-            var button = MakeButton(ToolIcon(name) + "   " + name, () => ShowTool(name));
-            button.HorizontalContentAlignment = HorizontalAlignment.Left;
-            button.Margin = new Thickness(0, 0, 0, 6);
-            button.Background = name == tool ? (Brush)_app.Resources["AccentBrush"] : Brush("#272D42");
-            Navigation.Children.Add(button);
-        }
+        TitleText.Text = tool;
+        BuildRail();
         ContentPanel.Children.Clear();
-        Heading(tool, tool switch
-        {
-            "Tasks" => "Stay on top of what matters.",
-            "Notes" => "Ideas captured instantly, saved locally.",
-            "Launcher" => "Your favorite apps, files, folders and sites.",
-            "Timer" => "A timer that keeps going when the panel is hidden.",
-            "Clipboard" => "Your clipboard, on your terms.",
-            "Screenshot" => "Capture locally. Nothing is uploaded.",
-            "Calculator" => "Instant calculations, no web required.",
-            "Settings" => "Make Floatly your own.",
-            "System" => "Useful Windows controls in one place.",
-            "Focus" => "Make time for focused work and breaks.",
-            _ => ""
-        });
         switch (tool)
         {
             case "Tasks": BuildTasks(); break;
@@ -92,136 +125,233 @@ public partial class ToolWindow : Window
             case "System": BuildSystem(); break;
             case "Focus": BuildFocus(); break;
         }
+        if (!switched) return;
+        Scroller.ScrollToTop();
+        if (_app.State.ReduceMotion) return;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        ContentPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        ContentSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
     }
 
-    private static string ToolIcon(string name) => name switch
-    {
-        "Tasks" => "✓", "Notes" => "✎", "Launcher" => "↗", "Timer" => "◷", "Clipboard" => "▤",
-        "Screenshot" => "▣", "Calculator" => "=", "Settings" => "⚙", "System" => "♫", "Focus" => "◎", _ => "•"
-    };
+    private void Rebuild() => ShowTool(_currentTool);
 
+    private void BuildRail()
+    {
+        Rail.Children.Clear();
+        foreach (var (name, icon) in Icons.Tools)
+        {
+            var button = IconBtn(icon, name, () => ShowTool(name));
+            button.Width = 36; button.Height = 36;
+            button.HorizontalAlignment = HorizontalAlignment.Center;
+            button.Margin = new Thickness(0, 0, 0, 4);
+            AutomationProperties.SetName(button, name);
+            if (name == _currentTool) button.SetResourceReference(BackgroundProperty, "AccentBrush");
+            else
+            {
+                button.Foreground = Brush("#B9C3E0");
+                button.MouseEnter += (_, _) => button.Background = Brush("#1FFFFFFF");
+                button.MouseLeave += (_, _) => button.Background = Brushes.Transparent;
+            }
+            Rail.Children.Add(button);
+        }
+    }
+
+    // ── Building blocks ─────────────────────────────────────────────────────
     private static SolidColorBrush Brush(string code) => (SolidColorBrush)new BrushConverter().ConvertFromString(code)!;
-    private static TextBlock Label(string text, int size = 13, string color = "#DDE2F2") => new()
+
+    private static TextBlock Text(string text, double size = 12.5, string color = "#EEF2FF") => new()
     {
         Text = text, FontSize = size, Foreground = Brush(color), TextWrapping = TextWrapping.Wrap,
-        VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 5, 0, 9)
+        Margin = new Thickness(0, 0, 0, 6)
     };
-    private static TextBox Input(string text = "", int height = 39) => new()
+    private static TextBlock Muted(string text) => Text(text, 11.5, "#9AA6C8");
+    private static TextBlock Section(string text) => new()
     {
-        Text = text, Height = height, MinWidth = 70, Margin = new Thickness(0, 0, 0, 9)
+        Text = text.ToUpperInvariant(), FontSize = 10, FontWeight = FontWeights.SemiBold,
+        Foreground = Brush("#8492B8"), Margin = new Thickness(0, 14, 0, 8)
     };
-    private static Button MakeButton(string title, Action action, bool primary = false)
+    private static TextBox Input(string hint, string text = "") => new()
+    {
+        Text = text, Tag = hint, Height = 34, Margin = new Thickness(0, 0, 0, 8)
+    };
+    private Button Btn(string title, Action action, bool primary = false)
     {
         var button = new Button
         {
-            Content = title,
-            Style = (Style)System.Windows.Application.Current.FindResource(primary ? "PrimaryButton" : "SecondaryButton"),
-            Margin = new Thickness(0, 0, 7, 9)
+            Content = title, Style = (Style)FindResource(primary ? "AccentButton" : "GlassButton"),
+            Margin = new Thickness(0, 0, 6, 6)
         };
         button.Click += (_, _) => action();
         return button;
     }
-    private void AddButtons(params Button[] buttons)
+    private Button IconBtn(string icon, string tip, Action action)
     {
-        var panel = new WrapPanel { Margin = new Thickness(0, 3, 0, 11) };
-        foreach (var b in buttons) panel.Children.Add(b);
-        ContentPanel.Children.Add(panel);
+        var button = new Button { Tag = Icons.Geometry(icon), ToolTip = tip, Style = (Style)FindResource("IconButton") };
+        AutomationProperties.SetName(button, tip);
+        button.Click += (_, _) => action();
+        return button;
     }
-    private void Heading(string title, string subtitle)
+    // Icon button on an accent background, used beside an input ("add").
+    private Button AccentIconBtn(string icon, string tip, Action action)
     {
-        ContentPanel.Children.Add(new TextBlock
+        var button = IconBtn(icon, tip, action);
+        button.Width = 34; button.Height = 34;
+        button.Margin = new Thickness(6, 0, 0, 8);
+        button.SetResourceReference(BackgroundProperty, "AccentBrush");
+        return button;
+    }
+    // Asks for a second click before doing something that cannot be undone.
+    private Button ConfirmBtn(string title, Action action)
+    {
+        bool armed = false;
+        Button button = null!;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        timer.Tick += (_, _) => { timer.Stop(); armed = false; button.Content = title; };
+        button = Btn(title, () =>
         {
-            Text = title, FontSize = 25, FontWeight = FontWeights.Bold, Foreground = Brushes.White,
-            Margin = new Thickness(0, 0, 0, 5)
+            if (armed) { timer.Stop(); action(); return; }
+            armed = true; button.Content = "Click again to confirm"; timer.Start();
         });
-        ContentPanel.Children.Add(Label(subtitle, 12, "#9CA8C5"));
+        return button;
     }
-    private static string Format(TimeSpan span)
+    private void Add(params UIElement[] elements)
     {
-        int hours = (int)span.TotalHours;
-        return $"{hours:00}:{span.Minutes:00}:{span.Seconds:00}";
+        foreach (var element in elements) ContentPanel.Children.Add(element);
     }
-    private static TextBlock ClockLabel(string value) => new()
+    private static WrapPanel Wrap(params UIElement[] elements)
     {
-        Text = value, FontSize = 35, FontWeight = FontWeights.Bold, Foreground = Brushes.White,
-        Margin = new Thickness(0, 7, 0, 18), FontFamily = new FontFamily("Consolas")
+        var panel = new WrapPanel();
+        foreach (var element in elements) panel.Children.Add(element);
+        return panel;
+    }
+    // Main element fills the width, the trailing ones keep their natural size on the right.
+    private static DockPanel Row(UIElement main, params UIElement[] trailing)
+    {
+        var row = new DockPanel();
+        foreach (var element in trailing.Reverse())
+        {
+            DockPanel.SetDock(element, Dock.Right);
+            row.Children.Add(element);
+        }
+        row.Children.Add(main);
+        return row;
+    }
+    private static Border Card(UIElement content) => new()
+    {
+        Child = content, Background = Brush("#10FFFFFF"), BorderBrush = Brush("#1CFFFFFF"),
+        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12),
+        Padding = new Thickness(11, 9, 8, 9), Margin = new Thickness(0, 0, 0, 6)
     };
-    private static bool Confirm(string message) => MessageBox.Show(message, "Floatly", MessageBoxButton.YesNo,
-        MessageBoxImage.Question) == MessageBoxResult.Yes;
-    private static void Error(string message) => MessageBox.Show(message, "Floatly", MessageBoxButton.OK, MessageBoxImage.Warning);
+    private WrapPanel Chips(string[] options, int selected, Action<int> pick)
+    {
+        var panel = new WrapPanel { Margin = new Thickness(0, 0, 0, 2) };
+        string group = Guid.NewGuid().ToString("N");
+        for (int i = 0; i < options.Length; i++)
+        {
+            int index = i;
+            var chip = new RadioButton
+            {
+                Content = options[i], GroupName = group, IsChecked = i == selected, Style = (Style)FindResource("Chip")
+            };
+            chip.Checked += (_, _) => pick(index);
+            panel.Children.Add(chip);
+        }
+        return panel;
+    }
+    private static TextBlock ClockLabel(string value)
+    {
+        var label = new TextBlock
+        {
+            Text = value, FontSize = 40, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        System.Windows.Documents.Typography.SetNumeralAlignment(label, FontNumeralAlignment.Tabular); // digits keep their width while ticking
+        return label;
+    }
+    private static string Format(TimeSpan span) => $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+
+    private void Toast(string message)
+    {
+        ToastText.Text = message;
+        ToastHost.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(140)));
+        _toastTimer.Stop(); _toastTimer.Start();
+    }
 
     // ── Tasks ───────────────────────────────────────────────────────────────
     private void BuildTasks()
     {
-        var input = Input();
-        input.ToolTip = "Write a task";
-        ContentPanel.Children.Add(Label("Add a task", 13));
-        ContentPanel.Children.Add(input);
-        var due = new DatePicker { SelectedDate = null, Margin = new Thickness(0, 0, 0, 9) };
-        ContentPanel.Children.Add(Label("Due date (optional)", 12, "#AEB8D2"));
-        ContentPanel.Children.Add(due);
-        var priority = new ComboBox { ItemsSource = new[] { "Normal", "Important", "Urgent" }, SelectedIndex = 0 };
-        ContentPanel.Children.Add(Label("Priority", 12, "#AEB8D2"));
-        ContentPanel.Children.Add(priority);
-        void Add()
+        var input = Input("Add a task");
+        void AddTask()
         {
             string name = input.Text.Trim();
-            if (name.Length == 0) { Error("Enter a task first."); return; }
+            if (name.Length == 0) { input.Focus(); return; }
+            DateTime? due = _newDue switch
+            {
+                1 => DateTime.Today, 2 => DateTime.Today.AddDays(1), 3 => DateTime.Today.AddDays(7), _ => null
+            };
             _app.State.Tasks.Insert(0, new TaskItem
             {
-                Title = name.Length > 250 ? name[..250] : name,
-                DueDate = due.SelectedDate,
-                Priority = priority.SelectedItem?.ToString() ?? "Normal"
+                Title = name.Length > 250 ? name[..250] : name, DueDate = due, Priority = _newPriority
             });
-            _app.Save(); ShowTool("Tasks");
+            _newDue = 0; _newPriority = "Normal";
+            _app.Save(); Rebuild();
         }
-        input.KeyDown += (_, e) => { if (e.Key == Key.Enter) Add(); };
-        AddButtons(MakeButton("+ Add task", Add, true));
-        var filter = new ComboBox { ItemsSource = new[] { "All", "Active", "Completed", "Due today", "Overdue" },
-            SelectedItem = _taskFilter };
-        filter.SelectionChanged += (_, _) =>
-        {
-            if (filter.SelectedItem is string f && _taskFilter != f) { _taskFilter = f; ShowTool("Tasks"); }
-        };
-        ContentPanel.Children.Add(filter);
-        var list = _app.State.Tasks.OrderBy(t => t.Done).ThenBy(t => t.DueDate ?? DateTime.MaxValue).ToList();
+        input.KeyDown += (_, e) => { if (e.Key == Key.Enter) AddTask(); };
+        Add(Row(input, AccentIconBtn(Icons.Plus, "Add task", AddTask)),
+            Chips(DueChoices, _newDue, i => _newDue = i),
+            Chips(Priorities, Array.IndexOf(Priorities, _newPriority), i => _newPriority = Priorities[i]));
+
+        var all = _app.State.Tasks;
         var today = DateTime.Today;
-        list = list.Where(t => _taskFilter switch
+        Add(Section(all.Count == 0 ? "Your tasks" : $"Your tasks  ·  {all.Count(t => t.Done)} of {all.Count} done"),
+            Chips(TaskFilters, Math.Max(0, Array.IndexOf(TaskFilters, _taskFilter)), i => { _taskFilter = TaskFilters[i]; Rebuild(); }));
+        var shown = all.Where(t => _taskFilter switch
         {
             "Active" => !t.Done,
-            "Completed" => t.Done,
-            "Due today" => !t.Done && t.DueDate?.Date == today,
+            "Done" => t.Done,
+            "Today" => !t.Done && t.DueDate?.Date == today,
             "Overdue" => !t.Done && t.DueDate?.Date < today,
             _ => true
-        }).ToList();
-        int complete = _app.State.Tasks.Count(t => t.Done);
-        ContentPanel.Children.Add(Label($"{complete}/{_app.State.Tasks.Count} completed   •   {list.Count} shown", 12, "#9EABCD"));
-        if (list.Count == 0) ContentPanel.Children.Add(Label("Nothing here yet. Add something above!", 13, "#9EABCD"));
-        foreach (var task in list)
+        }).OrderBy(t => t.Done).ThenBy(t => t.DueDate ?? DateTime.MaxValue).ToList();
+        if (shown.Count == 0) Add(Muted(all.Count == 0 ? "Nothing yet. Type above and press Enter." : "Nothing in this view."));
+        foreach (var task in shown)
         {
-            var row = new StackPanel { Margin = new Thickness(0, 0, 0, 6) };
-            var check = new CheckBox { IsChecked = task.Done, Content = task.Title,
-                FontSize = 13 };
-            check.Checked += (_, _) => { task.Done = true; _app.Save(); ShowTool("Tasks"); };
-            check.Unchecked += (_, _) => { task.Done = false; _app.Save(); ShowTool("Tasks"); };
-            row.Children.Add(check);
-            string dueText = task.DueDate?.ToString("dd MMM yyyy") ?? "No deadline";
-            string color = task.DueDate?.Date < today && !task.Done ? "#FF928F" : "#9CA8C5";
-            row.Children.Add(Label($"{task.Priority}   •   {dueText}", 11, color));
-            row.Children.Add(MakeButton("Delete", () =>
+            var check = new CheckBox { IsChecked = task.Done, Style = (Style)FindResource("RoundCheck"), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 1, 10, 0) };
+            AutomationProperties.SetName(check, task.Title);
+            check.Click += (_, _) => { task.Done = check.IsChecked == true; _app.Save(); Rebuild(); };
+            var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            var title = Text(task.Title, 12.5, task.Done ? "#8492B8" : "#EEF2FF");
+            title.Margin = new Thickness(0);
+            if (task.Done) title.TextDecorations = TextDecorations.Strikethrough;
+            words.Children.Add(title);
+            bool overdue = !task.Done && task.DueDate?.Date < today;
+            string due = task.DueDate?.Date switch
             {
-                _app.State.Tasks.RemoveAll(t => t.Id == task.Id); _app.Save(); ShowTool("Tasks");
-            }));
-            ContentPanel.Children.Add(Card(row));
+                null => "",
+                var d when d == today => "Today",
+                var d when d == today.AddDays(1) => "Tomorrow",
+                var d => d.Value.ToString("d MMM", CultureInfo.CurrentCulture)
+            };
+            string meta = string.Join("  ·  ", new[] { task.Priority == "Normal" ? "" : task.Priority, overdue ? "Overdue, " + due : due }.Where(s => s.Length > 0));
+            if (meta.Length > 0)
+            {
+                var line = Text(meta, 11, overdue ? "#FF9C99" : task.Priority == "Urgent" && !task.Done ? "#FFC98A" : "#9AA6C8");
+                line.Margin = new Thickness(0, 2, 0, 0);
+                words.Children.Add(line);
+            }
+            var remove = IconBtn(Icons.Trash, "Delete task", () =>
+            {
+                _app.State.Tasks.RemoveAll(t => t.Id == task.Id); _app.Save(); Rebuild();
+            });
+            remove.Foreground = Brush("#8492B8");
+            var row = new DockPanel();
+            DockPanel.SetDock(check, Dock.Left); DockPanel.SetDock(remove, Dock.Right);
+            row.Children.Add(check); row.Children.Add(remove); row.Children.Add(words);
+            Add(Card(row));
         }
+        // Keep typing: the box takes focus again after each add.
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => { if (_currentTool == "Tasks" && IsActive) input.Focus(); }));
     }
-
-    private static Border Card(UIElement content) => new()
-    {
-        Child = content, Background = Brush("#23293B"), Padding = new Thickness(12),
-        CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 0, 8),
-        BorderBrush = Brush("#3D445D"), BorderThickness = new Thickness(0.8)
-    };
 
     // ── Notes ───────────────────────────────────────────────────────────────
     private void SavePendingNotes(bool releaseEditor = false)
@@ -231,10 +361,11 @@ public partial class ToolWindow : Window
         if (_app.State.Notes.Any(n => n.Id == _editingNote.Id))
         {
             string title = _noteTitle.Text.Trim();
+            if (title.Length == 0) title = "Untitled note";
             string body = _noteEditor.Text;
             if (_editingNote.Title != title || _editingNote.Content != body)
             {
-                _editingNote.Title = title.Length == 0 ? "Untitled note" : title;
+                _editingNote.Title = title;
                 _editingNote.Content = body;
                 _editingNote.ModifiedUtc = DateTime.UtcNow;
                 _app.Save();
@@ -250,119 +381,129 @@ public partial class ToolWindow : Window
 
     private void BuildNotes()
     {
-        AddButtons(MakeButton("+ New note", () =>
+        var open = _openNote is Guid id ? _app.State.Notes.FirstOrDefault(n => n.Id == id) : null;
+        if (open is not null) { BuildNoteEditor(open); return; }
+        _openNote = null;
+        var search = Input("Search notes", _noteSearch);
+        var list = new StackPanel();
+        void Fill()
         {
-            _app.State.Notes.Insert(0, new NoteItem { Title = "Untitled note" });
-            _app.Save(); ShowTool("Notes");
-        }, true));
-        var search = Input(_noteSearch);
-        search.ToolTip = "Search note titles and text. Press Enter.";
-        search.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Enter) { _noteSearch = search.Text.Trim(); ShowTool("Notes"); }
-        };
-        ContentPanel.Children.Add(Label("Search notes (press Enter)", 12, "#AEB8D2"));
-        ContentPanel.Children.Add(search);
-        var matches = _app.State.Notes.Where(n => string.IsNullOrWhiteSpace(_noteSearch)
-            || n.Title.Contains(_noteSearch, StringComparison.OrdinalIgnoreCase)
-            || n.Content.Contains(_noteSearch, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(n => n.ModifiedUtc).ToList();
-        if (matches.Count == 0) ContentPanel.Children.Add(Label("No matching notes.", 12));
-        var choose = new ComboBox { ItemsSource = matches,
-            DisplayMemberPath = nameof(NoteItem.Title), SelectedIndex = matches.Count > 0 ? 0 : -1 };
-        ContentPanel.Children.Add(Label($"{_app.State.Notes.Count} saved notes", 12, "#AEB8D2"));
-        ContentPanel.Children.Add(choose);
-        var holder = new StackPanel();
-        ContentPanel.Children.Add(holder);
-        void Edit(NoteItem? selected)
-        {
-            SavePendingNotes(releaseEditor: true);
-            holder.Children.Clear();
-            if (selected is null) return;
-            _editingNote = selected;
-            _noteTitle = Input(selected.Title);
-            holder.Children.Add(Label("Title", 12));
-            holder.Children.Add(_noteTitle);
-            _noteEditor = new TextBox
+            list.Children.Clear();
+            var matches = _app.State.Notes.Where(n => _noteSearch.Length == 0
+                || n.Title.Contains(_noteSearch, StringComparison.OrdinalIgnoreCase)
+                || n.Content.Contains(_noteSearch, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(n => n.ModifiedUtc).ToList();
+            if (matches.Count == 0)
+                list.Children.Add(Muted(_app.State.Notes.Count == 0 ? "No notes yet. Press + to write one." : "Nothing matches that search."));
+            foreach (var note in matches)
             {
-                Text = selected.Content, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
-                AcceptsTab = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Height = 195, Padding = new Thickness(12), FontSize = 13,
-                VerticalContentAlignment = VerticalAlignment.Top
-            };
-            _noteTitle.TextChanged += (_, _) => { _noteAutosave.Stop(); _noteAutosave.Start(); };
-            _noteEditor.TextChanged += (_, _) => { _noteAutosave.Stop(); _noteAutosave.Start(); };
-            holder.Children.Add(Label("Content", 12));
-            holder.Children.Add(_noteEditor);
-            var actions = new WrapPanel();
-            actions.Children.Add(MakeButton("Save now", () =>
-            {
-                SavePendingNotes(); _app.Notify("Note saved", "Your note was saved locally.");
-            }, true));
-            actions.Children.Add(MakeButton("Delete note", () =>
-            {
-                if (!Confirm("Delete this note permanently?")) return;
-                _app.State.Notes.RemoveAll(n => n.Id == selected.Id);
-                _editingNote = null; _noteTitle = null; _noteEditor = null;
-                _app.Save(); ShowTool("Notes");
-            }));
-            holder.Children.Add(actions);
-            holder.Children.Add(Label("Automatically saved after typing stops.", 11, "#A1ACC7"));
+                var words = new StackPanel();
+                var title = Text(note.Title, 12.5); title.FontWeight = FontWeights.SemiBold; title.Margin = new Thickness(0);
+                title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
+                words.Children.Add(title);
+                string firstLine = note.Content.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "Empty note";
+                var preview = Text(firstLine, 11.5, "#9AA6C8"); preview.Margin = new Thickness(0, 2, 0, 0);
+                preview.TextWrapping = TextWrapping.NoWrap; preview.TextTrimming = TextTrimming.CharacterEllipsis;
+                words.Children.Add(preview);
+                var card = Card(words);
+                card.Cursor = Cursors.Hand;
+                card.MouseEnter += (_, _) => card.Background = Brush("#22FFFFFF");
+                card.MouseLeave += (_, _) => card.Background = Brush("#10FFFFFF");
+                card.MouseLeftButtonUp += (_, _) => { _openNote = note.Id; Rebuild(); };
+                list.Children.Add(card);
+            }
         }
-        choose.SelectionChanged += (_, _) => Edit(choose.SelectedItem as NoteItem);
-        Edit(choose.SelectedItem as NoteItem);
+        search.TextChanged += (_, _) => { _noteSearch = search.Text.Trim(); Fill(); };
+        Add(Row(search, AccentIconBtn(Icons.Plus, "New note", () =>
+        {
+            var note = new NoteItem();
+            _app.State.Notes.Insert(0, note);
+            _app.Save(); _openNote = note.Id; Rebuild();
+        })), list);
+        Fill();
+    }
+
+    private void BuildNoteEditor(NoteItem note)
+    {
+        _editingNote = note;
+        void Leave() { SavePendingNotes(releaseEditor: true); _openNote = null; Rebuild(); }
+        var delete = ConfirmBtn("Delete", () =>
+        {
+            _app.State.Notes.RemoveAll(n => n.Id == note.Id);
+            _editingNote = null; _noteTitle = null; _noteEditor = null; _openNote = null;
+            _app.Save(); Rebuild();
+        });
+        delete.Margin = new Thickness(0, 0, 0, 8);
+        var back = IconBtn(Icons.Back, "All notes", Leave);
+        back.Margin = new Thickness(-6, 0, 0, 8); back.HorizontalAlignment = HorizontalAlignment.Left;
+        Add(Row(back, delete));
+        _noteTitle = Input("Title", note.Title == "Untitled note" ? "" : note.Title);
+        _noteTitle.FontWeight = FontWeights.SemiBold;
+        _noteEditor = new TextBox
+        {
+            Text = note.Content, Tag = "Write here…", AcceptsReturn = true, AcceptsTab = true,
+            TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Height = 330, VerticalContentAlignment = VerticalAlignment.Stretch, Margin = new Thickness(0, 0, 0, 8)
+        };
+        _noteTitle.TextChanged += (_, _) => { _noteAutosave.Stop(); _noteAutosave.Start(); };
+        _noteEditor.TextChanged += (_, _) => { _noteAutosave.Stop(); _noteAutosave.Start(); };
+        Add(_noteTitle, _noteEditor, Muted("Saved automatically as you type."));
+        var editor = _noteEditor;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => { if (IsActive) editor.Focus(); }));
     }
 
     // ── Launcher ────────────────────────────────────────────────────────────
     private void BuildLauncher()
     {
-        ContentPanel.Children.Add(Label("Built-in Windows shortcuts", 13));
-        AddButtons(
-            MakeButton("Notepad", () => Launch("notepad.exe"), true),
-            MakeButton("Explorer", () => Launch("explorer.exe")),
-            MakeButton("Paint", () => Launch("mspaint.exe")));
-        ContentPanel.Children.Add(Label("Your pinned shortcuts", 13));
+        Add(Wrap(Btn("Notepad", () => Launch("notepad.exe")), Btn("Explorer", () => Launch("explorer.exe")),
+            Btn("Paint", () => Launch("mspaint.exe")), Btn("Task Manager", () => Launch("taskmgr.exe"))));
+        Add(Section("Pinned"));
+        if (_app.State.Shortcuts.Count == 0) Add(Muted("Pin an app, file, folder or website below."));
         foreach (var entry in _app.State.Shortcuts.ToList())
         {
-            var row = new WrapPanel();
-            row.Children.Add(MakeButton("↗ " + entry.Name, () => Launch(entry.Target), true));
-            row.Children.Add(MakeButton("Remove", () =>
+            var open = Btn(entry.Name, () => Launch(entry.Target), true);
+            open.Margin = new Thickness(0); open.HorizontalAlignment = HorizontalAlignment.Left; open.ToolTip = entry.Target;
+            var remove = IconBtn(Icons.Trash, "Remove shortcut", () =>
             {
-                _app.State.Shortcuts.RemoveAll(x => x.Id == entry.Id); _app.Save(); ShowTool("Launcher");
-            }));
-            ContentPanel.Children.Add(Card(row));
+                _app.State.Shortcuts.RemoveAll(x => x.Id == entry.Id); _app.Save(); Rebuild();
+            });
+            remove.Foreground = Brush("#8492B8");
+            Add(Card(Row(open, remove)));
         }
-        ContentPanel.Children.Add(Label("Add a shortcut", 14));
-        var name = Input(); var target = Input();
-        ContentPanel.Children.Add(Label("Shortcut name", 12)); ContentPanel.Children.Add(name);
-        ContentPanel.Children.Add(Label("Path, folder, or https:// website", 12)); ContentPanel.Children.Add(target);
-        AddButtons(
-            MakeButton("Browse file", () =>
+        Add(Section("Pin something"));
+        var name = Input("Name"); var target = Input("Path or https:// link");
+        Add(name, target, Wrap(
+            Btn("File…", () =>
             {
-                var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Choose an application, document or shortcut", Filter = "All files (*.*)|*.*" };
-                if (dialog.ShowDialog(this) == true) { target.Text = dialog.FileName; if (name.Text == "") name.Text = Path.GetFileNameWithoutExtension(dialog.FileName); }
+                var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Choose an app, document or shortcut", Filter = "All files (*.*)|*.*" };
+                if (dialog.ShowDialog(this) != true) return;
+                target.Text = dialog.FileName;
+                if (name.Text == "") name.Text = Path.GetFileNameWithoutExtension(dialog.FileName);
             }),
-            MakeButton("Browse folder", () =>
+            Btn("Folder…", () =>
             {
                 using var dialog = new System.Windows.Forms.FolderBrowserDialog { Description = "Choose a folder" };
-                if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK) { target.Text = dialog.SelectedPath; if (name.Text == "") name.Text = Path.GetFileName(dialog.SelectedPath); }
-            }));
-        AddButtons(MakeButton("+ Save shortcut", () =>
-        {
-            string n = name.Text.Trim(), path = target.Text.Trim();
-            if (n.Length == 0 || path.Length == 0) { Error("Add a name and a path or URL."); return; }
-            if (!(path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                || File.Exists(path) || Directory.Exists(path)))
-            { Error("Select an existing file or folder, or enter an http(s) URL."); return; }
-            _app.State.Shortcuts.Add(new LauncherItem { Name = n[..Math.Min(n.Length, 80)], Target = path });
-            _app.Save(); ShowTool("Launcher");
-        }, true));
+                if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                target.Text = dialog.SelectedPath;
+                if (name.Text == "") name.Text = Path.GetFileName(dialog.SelectedPath);
+            }),
+            Btn("Pin", () =>
+            {
+                string n = name.Text.Trim(), path = target.Text.Trim();
+                if (n.Length == 0 || path.Length == 0) { Toast("Add a name and a path or link."); return; }
+                if (!(path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    || File.Exists(path) || Directory.Exists(path)))
+                { Toast("That file or folder does not exist. Links must start with http."); return; }
+                _app.State.Shortcuts.Add(new LauncherItem { Name = n[..Math.Min(n.Length, 80)], Target = path });
+                _app.Save(); Rebuild();
+            }, true)));
     }
-    private static void Launch(string target)
+
+    private void Launch(string target)
     {
         try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); }
-        catch (Exception ex) { Error("Could not open the selected item: " + ex.Message); }
+        catch (Exception ex) { Toast("Could not open it: " + ex.Message); }
     }
 
     // ── Timer and stopwatch ─────────────────────────────────────────────────
@@ -371,109 +512,135 @@ public partial class ToolWindow : Window
     private void UpdateClocks()
     {
         // A countdown or session that ends on its own must also refresh the
-        // Start/Pause buttons and the focus/break heading, not only the digits.
+        // Start/Pause buttons and the focus/break choice, not only the digits.
         if (_currentTool is "Timer" or "Focus" && _clockSignature != ClockSignature())
         {
-            ShowTool(_currentTool);
+            Rebuild();
             return;
         }
         if (_timerDisplay is not null) _timerDisplay.Text = Format(_app.Clock.TimerRemaining);
         if (_stopwatchDisplay is not null) _stopwatchDisplay.Text = Format(_app.Clock.StopwatchElapsed);
         if (_focusDisplay is not null) _focusDisplay.Text = Format(_app.Clock.FocusRemaining);
-        if (_sessionStats is not null) _sessionStats.Text = $"Completed focus sessions: {_app.Clock.CompletedFocusSessions}";
+        if (_sessionStats is not null) _sessionStats.Text = SessionText();
     }
 
     private void BuildTimer()
     {
-        ContentPanel.Children.Add(Label("Countdown", 15, "#BEB4FF"));
         _timerDisplay = ClockLabel(Format(_app.Clock.TimerRemaining));
-        ContentPanel.Children.Add(_timerDisplay);
-        var minutes = Input("5");
-        ContentPanel.Children.Add(Label("Minutes (1–180)", 12));
-        ContentPanel.Children.Add(minutes);
-        AddButtons(
-            MakeButton(_app.Clock.TimerRunning ? "Pause countdown" : "Start countdown", () =>
-            {
-                _app.Clock.ToggleTimer(); ShowTool("Timer");
-            }, true),
-            MakeButton("Set / Reset", () =>
-            {
-                if (!int.TryParse(minutes.Text, out int n) || n < 1 || n > 180) { Error("Enter between 1 and 180 minutes."); return; }
-                _app.Clock.SetTimer(n); ShowTool("Timer");
-            }));
-        AddButtons(
-            MakeButton("5 min", () => { _app.Clock.SetTimer(5); ShowTool("Timer"); }),
-            MakeButton("15 min", () => { _app.Clock.SetTimer(15); ShowTool("Timer"); }),
-            MakeButton("30 min", () => { _app.Clock.SetTimer(30); ShowTool("Timer"); }));
-        ContentPanel.Children.Add(Label("Stopwatch", 15, "#BEB4FF"));
+        void Set(int minutes) { _timerMinutes = minutes; _app.Clock.SetTimer(minutes); Rebuild(); }
+        int[] presets = { 1, 5, 15, 30, 60 };
+        var custom = Input("Minutes");
+        custom.Width = 90; custom.Margin = new Thickness(0, 0, 6, 6); custom.Height = 31;
+        custom.Padding = new Thickness(10, 0, 10, 0); // 31px leaves no room for the default 7px vertical padding
+        void SetCustom()
+        {
+            if (!int.TryParse(custom.Text, out int n) || n < 1 || n > 180) { Toast("Enter 1 to 180 minutes."); return; }
+            Set(n);
+        }
+        custom.KeyDown += (_, e) => { if (e.Key == Key.Enter) SetCustom(); };
+        Add(_timerDisplay,
+            Wrap(Btn(_app.Clock.TimerRunning ? "Pause" : "Start", () => { _app.Clock.ToggleTimer(); Rebuild(); }, true),
+                 Btn("Reset", () => Set(_timerMinutes))),
+            Chips(presets.Select(p => p + " min").ToArray(), Array.IndexOf(presets, _timerMinutes), i => Set(presets[i])),
+            Wrap(custom, Btn("Set", SetCustom)));
+        Add(Section("Stopwatch"));
         _stopwatchDisplay = ClockLabel(Format(_app.Clock.StopwatchElapsed));
-        ContentPanel.Children.Add(_stopwatchDisplay);
-        AddButtons(
-            MakeButton(_app.Clock.StopwatchRunning ? "Pause stopwatch" : "Start stopwatch", () =>
-            { _app.Clock.ToggleStopwatch(); ShowTool("Timer"); }, true),
-            MakeButton("Reset stopwatch", () => { _app.Clock.ResetStopwatch(); ShowTool("Timer"); }));
-        ContentPanel.Children.Add(Label("Timers continue while Floatly is running, even if you close this panel.", 12, "#A8B2CC"));
+        Add(_stopwatchDisplay,
+            Wrap(Btn(_app.Clock.StopwatchRunning ? "Pause" : "Start", () => { _app.Clock.ToggleStopwatch(); Rebuild(); }, true),
+                 Btn("Reset", () => { _app.Clock.ResetStopwatch(); Rebuild(); })));
     }
 
-    // ── Clipboard (explicit capture or SESSION-ONLY opt in) ────────────────
+    // ── Focus sessions ──────────────────────────────────────────────────────
+    private string SessionText()
+    {
+        int count = _app.Clock.CompletedFocusSessions;
+        return count == 1 ? "1 focus session completed" : $"{count} focus sessions completed";
+    }
+
+    private void BuildFocus()
+    {
+        _focusDisplay = ClockLabel(Format(_app.Clock.FocusRemaining));
+        _sessionStats = Muted(SessionText());
+        Add(Chips(new[] { "Focus", "Break" }, _app.Clock.FocusIsBreak ? 1 : 0, i =>
+            {
+                if ((i == 1) != _app.Clock.FocusIsBreak) _app.Clock.SwitchFocusMode();
+                Rebuild();
+            }),
+            _focusDisplay,
+            Wrap(Btn(_app.Clock.FocusRunning ? "Pause" : "Start", () => { _app.Clock.ToggleFocus(); Rebuild(); }, true),
+                 Btn("Reset", () => { _app.Clock.ResetFocus(); Rebuild(); })),
+            _sessionStats);
+        Add(Section("Lengths in minutes"));
+        var focusInput = Input("Focus", _app.Clock.FocusMinutes.ToString());
+        var breakInput = Input("Break", _app.Clock.BreakMinutes.ToString());
+        focusInput.Width = 70; breakInput.Width = 70;
+        focusInput.Margin = breakInput.Margin = new Thickness(0, 0, 6, 6);
+        focusInput.Height = breakInput.Height = 31;
+        focusInput.Padding = breakInput.Padding = new Thickness(10, 0, 10, 0);
+        focusInput.ToolTip = "Focus length, 1 to 120"; breakInput.ToolTip = "Break length, 1 to 60";
+        Add(Wrap(focusInput, breakInput, Btn("Save", () =>
+        {
+            if (!int.TryParse(focusInput.Text, out int focus) || focus is < 1 or > 120 ||
+                !int.TryParse(breakInput.Text, out int rest) || rest is < 1 or > 60)
+            { Toast("Focus is 1 to 120 minutes, break is 1 to 60."); return; }
+            _app.State.FocusMinutes = focus; _app.State.BreakMinutes = rest;
+            _app.Clock.UpdateFocusDurations(focus, rest);
+            _app.Save(); Rebuild();
+        })));
+    }
+
+    // ── Clipboard (explicit capture or session-only opt in) ─────────────────
     private void BuildClipboard()
     {
-        ContentPanel.Children.Add(Label("Nothing is collected automatically unless you enable the option below. Saved text is stored as readable local data. Never save passwords or secrets.", 12, "#B3BED7"));
-        var listen = new CheckBox { Content = "Automatically save copied text for this session", IsChecked = _app.Overlay.ClipboardListening };
+        var listen = new CheckBox { Content = "Save everything I copy", IsChecked = _app.Overlay.ClipboardListening };
         listen.Checked += (_, _) =>
         {
-            if (!Confirm("Automatic clipboard capture may include passwords, private messages, or other sensitive text. Enable until Floatly exits?"))
-            { listen.IsChecked = false; return; }
-            if (!_app.Overlay.SetClipboardListening(true)) { Error("Could not start clipboard monitoring."); listen.IsChecked = false; }
+            if (!_app.Overlay.SetClipboardListening(true)) { Toast("Could not start watching the clipboard."); listen.IsChecked = false; }
         };
         listen.Unchecked += (_, _) => _app.Overlay.SetClipboardListening(false);
-        ContentPanel.Children.Add(listen);
-        AddButtons(MakeButton("Save current copied text", () =>
+        Add(listen,
+            Muted("Off every time Floatly starts. Saved text is stored unencrypted on this PC, so don't keep passwords here."),
+            Wrap(Btn("Save what's copied now", () => { _app.SaveClipboardSnapshot(); Rebuild(); }, true),
+                 ConfirmBtn("Clear all", () => { _app.State.ClipboardItems.Clear(); _app.Save(); Rebuild(); })));
+        var items = _app.State.ClipboardItems.ToList();
+        Add(Section(items.Count == 0 ? "Saved" : $"Saved  ·  {items.Count} of 30"));
+        if (items.Count == 0) Add(Muted("Nothing saved yet."));
+        foreach (var entry in items)
         {
-            _app.SaveClipboardSnapshot(); ShowTool("Clipboard");
-        }, true), MakeButton("Clear saved entries", () =>
-        {
-            if (!Confirm("Permanently delete all saved clipboard entries?")) return;
-            _app.State.ClipboardItems.Clear(); _app.Save(); ShowTool("Clipboard");
-        }));
-        ContentPanel.Children.Add(Label($"{_app.State.ClipboardItems.Count} saved text snippets (up to 30)", 12, "#9EAAC7"));
-        foreach (var entry in _app.State.ClipboardItems.ToList())
-        {
-            var stack = new StackPanel();
-            stack.Children.Add(Label(entry.Content.Length > 180 ? entry.Content[..180] + "…" : entry.Content, 12));
-            stack.Children.Add(Label(entry.CapturedUtc.ToLocalTime().ToString("g"), 10, "#9EAAC7"));
-            var actions = new WrapPanel();
-            actions.Children.Add(MakeButton("Copy", () =>
+            var words = new StackPanel();
+            var body = Text(entry.Content.Length > 180 ? entry.Content[..180] + "…" : entry.Content, 12);
+            body.Margin = new Thickness(0); body.MaxHeight = 52; body.TextTrimming = TextTrimming.CharacterEllipsis;
+            var when = Text(entry.CapturedUtc.ToLocalTime().ToString("g"), 10.5, "#8492B8"); when.Margin = new Thickness(0, 3, 0, 0);
+            words.Children.Add(body); words.Children.Add(when);
+            var copy = IconBtn(Icons.Copy, "Copy", () =>
             {
-                try { System.Windows.Clipboard.SetText(entry.Content); }
-                catch (Exception ex) { Error("Clipboard is currently unavailable: " + ex.Message); }
-            }, true));
-            actions.Children.Add(MakeButton("Delete", () =>
+                try { System.Windows.Clipboard.SetText(entry.Content); Toast("Copied."); }
+                catch (Exception ex) { Toast("Clipboard is busy: " + ex.Message); }
+            });
+            var remove = IconBtn(Icons.Trash, "Delete", () =>
             {
-                _app.State.ClipboardItems.RemoveAll(x => x.Id == entry.Id); _app.Save(); ShowTool("Clipboard");
-            }));
-            stack.Children.Add(actions);
-            ContentPanel.Children.Add(Card(stack));
+                _app.State.ClipboardItems.RemoveAll(x => x.Id == entry.Id); _app.Save(); Rebuild();
+            });
+            remove.Foreground = Brush("#8492B8");
+            copy.VerticalAlignment = remove.VerticalAlignment = VerticalAlignment.Top;
+            Add(Card(Row(words, copy, remove)));
         }
     }
 
     // ── Screenshots ─────────────────────────────────────────────────────────
     private void BuildScreenshot()
     {
-        ContentPanel.Children.Add(Label("Choose exactly what to capture. Floatly hides itself before the screenshot and restores afterward.", 13));
-        AddButtons(
-            MakeButton("Select region", () => _ = CaptureAsync("region"), true),
-            MakeButton("Primary monitor", () => _ = CaptureAsync("primary")),
-            MakeButton("All monitors", () => _ = CaptureAsync("all")));
-        AddButtons(MakeButton("Open screenshot folder", () =>
+        Add(Wrap(Btn("Select area", () => _ = CaptureAsync("region"), true),
+                 Btn("This screen", () => _ = CaptureAsync("primary")),
+                 Btn("All screens", () => _ = CaptureAsync("all"))),
+            Muted("Floatly hides itself while capturing. Area selection works on the main screen."));
+        Add(Section("Saved to Pictures\\Floatly Captures"));
+        if (_lastCapture is not null) Add(Text("Last: " + Path.GetFileName(_lastCapture), 12, "#7FE0B4"));
+        Add(Wrap(Btn("Open folder", () =>
         {
-            string pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-            var folder = Path.Combine(pictures, "Floatly Captures");
+            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Floatly Captures");
             Directory.CreateDirectory(folder); Launch(folder);
-        }));
-        if (_lastCapture is not null)
-            ContentPanel.Children.Add(Label("Saved: " + _lastCapture, 12, "#7FE0B4"));
-        ContentPanel.Children.Add(Label("Screen images are saved as PNG files in Pictures\\Floatly Captures. Region selection uses the primary monitor.", 12, "#9EAAC7"));
+        })));
     }
 
     private async Task CaptureAsync(string mode)
@@ -496,29 +663,38 @@ public partial class ToolWindow : Window
             }
             else path = ScreenshotService.Save(screen);
         }
-        catch (Exception ex) { Error("Screenshot failed: " + ex.Message); }
+        catch (Exception ex) { Toast("Screenshot failed: " + ex.Message); }
         finally
         {
             if (bubbleWasVisible) _app.Overlay.ShowAndActivate();
             Show(); Activate();
         }
-        if (path is not null)
-        {
-            _lastCapture = path;
-            _app.Notify("Screenshot saved", Path.GetFileName(path));
-            if (_currentTool == "Screenshot") ShowTool("Screenshot");
-        }
+        if (path is null) return;
+        _lastCapture = path;
+        if (_currentTool == "Screenshot") Rebuild();
+        Toast("Screenshot saved.");
     }
 
     // ── Calculator ──────────────────────────────────────────────────────────
     private void BuildCalculator()
     {
-        var expression = Input(height: 48); // the default 39 clips 20pt text
-        expression.FontSize = 20;
-        expression.ToolTip = "Enter arithmetic using + - * / and parentheses";
-        ContentPanel.Children.Add(expression);
-        var output = Label("Enter a calculation", 19, "#BBAEFF");
-        ContentPanel.Children.Add(output);
+        var expression = Input("0");
+        expression.FontSize = 20; expression.Height = 46; expression.Margin = new Thickness(0, 0, 0, 4);
+        var output = Text(" ", 15, "#B9C3E0");
+        output.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
+        output.Margin = new Thickness(2, 0, 0, 8); output.FontWeight = FontWeights.SemiBold;
+        var history = new StackPanel();
+        void FillHistory()
+        {
+            history.Children.Clear();
+            foreach (var item in _app.State.Calculations.Take(5))
+            {
+                var line = Muted(item.Expression + " = " + item.Result);
+                line.Cursor = Cursors.Hand; line.ToolTip = "Use this result";
+                line.MouseLeftButtonUp += (_, _) => { expression.Text = item.Result; expression.CaretIndex = expression.Text.Length; expression.Focus(); };
+                history.Children.Add(line);
+            }
+        }
         void Calculate()
         {
             try
@@ -528,98 +704,86 @@ public partial class ToolWindow : Window
                 output.Text = "= " + result;
                 _app.State.Calculations.Insert(0, new CalculationEntry { Expression = expression.Text, Result = result });
                 if (_app.State.Calculations.Count > 15) _app.State.Calculations.RemoveRange(15, _app.State.Calculations.Count - 15);
-                _app.Save();
+                _app.Save(); FillHistory();
             }
             catch (Exception ex) when (ex is FormatException or ArithmeticException)
             { output.Text = ex.Message; }
         }
         expression.KeyDown += (_, e) => { if (e.Key == Key.Enter) Calculate(); };
-        string[][] buttons =
+        var keys = new UniformGrid { Columns = 4, Margin = new Thickness(-3, 0, -3, 0) };
+        foreach (string symbol in new[] { "7", "8", "9", "/", "4", "5", "6", "*", "1", "2", "3", "-", "0", ".", "(", ")", "C", "⌫", "+", "=" })
         {
-            new[] { "7", "8", "9", "/" },
-            new[] { "4", "5", "6", "*" },
-            new[] { "1", "2", "3", "-" },
-            new[] { "0", ".", "(", ")" },
-            new[] { "C", "⌫", "+", "=" }
-        };
-        foreach (var line in buttons)
-        {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal };
-            foreach (var key in line)
+            var key = Btn(symbol, () =>
             {
-                string symbol = key;
-                var button = MakeButton(symbol, () =>
+                switch (symbol)
                 {
-                    switch (symbol)
-                    {
-                        case "=": Calculate(); break;
-                        case "C": expression.Clear(); output.Text = "Enter a calculation"; break;
-                        case "⌫": if (expression.Text.Length > 0) expression.Text = expression.Text[..^1]; break;
-                        default: expression.Text += symbol; break;
-                    }
-                    expression.CaretIndex = expression.Text.Length;
-                }, symbol == "=");
-                button.Width = 72; button.Height = 43;
-                panel.Children.Add(button);
-            }
-            ContentPanel.Children.Add(panel);
+                    case "=": Calculate(); break;
+                    case "C": expression.Clear(); output.Text = " "; break;
+                    case "⌫": if (expression.Text.Length > 0) expression.Text = expression.Text[..^1]; break;
+                    default: expression.Text += symbol; break;
+                }
+                expression.CaretIndex = expression.Text.Length;
+            }, symbol == "=");
+            key.Height = 40; key.Margin = new Thickness(3); key.FontSize = 14; key.Padding = new Thickness(0);
+            keys.Children.Add(key);
         }
-        ContentPanel.Children.Add(Label("Recent calculations", 13));
-        foreach (var item in _app.State.Calculations.Take(5))
-            ContentPanel.Children.Add(Label(item.Expression + " = " + item.Result, 12, "#9EAAC7"));
+        Add(expression, output, keys, Section("Recent"), history);
+        FillHistory();
     }
 
     // ── Settings ────────────────────────────────────────────────────────────
     private void BuildSettings()
     {
-        ContentPanel.Children.Add(Label("Appearance", 16, "#BBAEFF"));
-        var color = new ComboBox { ItemsSource = App.AccentThemes.Select(x => x.Name).ToList(), SelectedItem = _app.State.Accent };
-        color.SelectionChanged += (_, _) =>
+        Add(Section("Colour"));
+        var swatches = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        foreach (var (name, code) in App.AccentThemes)
         {
-            if (color.SelectedItem is string theme)
-            { _app.State.Accent = theme; _app.ApplyTheme(); _app.Save(); }
-        };
-        ContentPanel.Children.Add(Label("Accent color", 12)); ContentPanel.Children.Add(color);
-        var opacity = new Slider { Minimum = 0.35, Maximum = 1, Value = _app.State.BubbleOpacity,
-            Margin = new Thickness(0, 0, 0, 13) };
+            bool chosen = name == _app.State.Accent;
+            var swatch = new Border
+            {
+                Width = 28, Height = 28, CornerRadius = new CornerRadius(14), Background = Brush(code),
+                BorderBrush = chosen ? Brushes.White : Brush("#30FFFFFF"), BorderThickness = new Thickness(chosen ? 2.5 : 1),
+                Margin = new Thickness(0, 0, 10, 0), Cursor = Cursors.Hand, ToolTip = name
+            };
+            swatch.MouseLeftButtonUp += (_, _) => { _app.State.Accent = name; _app.ApplyTheme(); _app.Save(); Rebuild(); };
+            swatches.Children.Add(swatch);
+        }
+        Add(swatches);
+        Add(Section("Floating button"));
+        var opacity = new Slider { Minimum = 0.35, Maximum = 1, Value = _app.State.BubbleOpacity };
         opacity.ValueChanged += (_, _) =>
         {
             _app.State.BubbleOpacity = opacity.Value;
             _app.Overlay.SetBubbleOpacity(opacity.Value);
             _app.SaveSoon();
         };
-        ContentPanel.Children.Add(Label("Floating button opacity", 12)); ContentPanel.Children.Add(opacity);
-        var size = new Slider { Minimum = 48, Maximum = 72, TickFrequency = 4, IsSnapToTickEnabled = true,
-            Value = _app.State.BubbleSize, Margin = new Thickness(0, 0, 0, 13) };
+        var size = new Slider { Minimum = 48, Maximum = 72, TickFrequency = 4, IsSnapToTickEnabled = true, Value = _app.State.BubbleSize };
         size.ValueChanged += (_, _) => { _app.Overlay.SetBubbleSize((int)size.Value); _app.SaveSoon(); };
-        ContentPanel.Children.Add(Label("Floating button size", 12)); ContentPanel.Children.Add(size);
-        var motion = new CheckBox { Content = "Reduce menu animations", IsChecked = _app.State.ReduceMotion };
-        motion.Checked += (_, _) => { _app.State.ReduceMotion = true; _app.Save(); };
-        motion.Unchecked += (_, _) => { _app.State.ReduceMotion = false; _app.Save(); };
-        ContentPanel.Children.Add(motion);
-        ContentPanel.Children.Add(Label("Windows integration", 16, "#BBAEFF"));
-        var startup = new CheckBox { Content = "Start automatically after Windows sign-in", IsChecked = StartupService.IsEnabled() };
+        Add(Muted("Opacity"), opacity, Muted("Size"), size);
+        var motion = new CheckBox { Content = "Reduce motion", IsChecked = _app.State.ReduceMotion };
+        motion.Click += (_, _) => { _app.State.ReduceMotion = motion.IsChecked == true; _app.Save(); };
+        Add(motion);
+
+        Add(Section("Windows"));
+        var startup = new CheckBox { Content = "Start with Windows", IsChecked = StartupService.IsEnabled() };
         startup.Checked += (_, _) => ToggleStartup(true, startup);
         startup.Unchecked += (_, _) => ToggleStartup(false, startup);
-        ContentPanel.Children.Add(startup);
-        var hotkey = new CheckBox { Content = "Ctrl + Alt + Space opens Floatly", IsChecked = _app.State.HotkeyEnabled };
-        hotkey.Checked += (_, _) =>
+        var hotkey = new CheckBox { Content = "Open with Ctrl + Alt + Space", IsChecked = _app.State.HotkeyEnabled };
+        hotkey.Click += (_, _) =>
         {
-            _app.State.HotkeyEnabled = true; _app.Save();
-            if (!_app.Overlay.RefreshHotkey())
-                Error("Ctrl + Alt + Space is already used by another program, so Floatly cannot use it right now.");
+            _app.State.HotkeyEnabled = hotkey.IsChecked == true; _app.Save();
+            if (!_app.Overlay.RefreshHotkey()) Toast("Another program is already using Ctrl + Alt + Space.");
         };
-        hotkey.Unchecked += (_, _) => { _app.State.HotkeyEnabled = false; _app.Overlay.RefreshHotkey(); _app.Save(); };
-        ContentPanel.Children.Add(hotkey);
-        ContentPanel.Children.Add(Label("Data and privacy", 16, "#BBAEFF"));
-        ContentPanel.Children.Add(Label("All data stays on this computer in %LOCALAPPDATA%\\Floatly. It is not encrypted, so don't save passwords. Clipboard auto-capture always starts disabled.", 12, "#AAB5CE"));
-        AddButtons(
-            MakeButton("Open data folder", () => Launch(_app.Storage.Folder)),
-            MakeButton("Export backup", () =>
-            {
-                try { _app.Save(); var file = _app.Storage.ExportBackup(); MessageBox.Show("Backup saved:\n" + file, "Floatly"); }
-                catch (Exception ex) { Error("Backup failed: " + ex.Message); }
-            }, true));
+        Add(startup, hotkey);
+
+        Add(Section("Your data"),
+            Muted("Everything stays on this PC, unencrypted, in a folder only your account uses."),
+            Wrap(Btn("Open folder", () => Launch(_app.Storage.Folder)),
+                 Btn("Export backup", () =>
+                 {
+                     try { _app.Save(); Toast("Backup saved: " + Path.GetFileName(_app.Storage.ExportBackup())); }
+                     catch (Exception ex) { Toast("Backup failed: " + ex.Message); }
+                 })));
     }
 
     private void ToggleStartup(bool enabled, CheckBox box)
@@ -628,7 +792,7 @@ public partial class ToolWindow : Window
         try { StartupService.SetEnabled(enabled); }
         catch (Exception ex)
         {
-            Error("Unable to change startup setting: " + ex.Message);
+            Toast(ex.Message);
             _startupReverting = true; box.IsChecked = !enabled; _startupReverting = false;
         }
     }
@@ -641,57 +805,20 @@ public partial class ToolWindow : Window
         keybd_event(virtualKey, 0, 0, UIntPtr.Zero);
         keybd_event(virtualKey, 0, 2, UIntPtr.Zero);
     }
+
     private void BuildSystem()
     {
-        ContentPanel.Children.Add(Label("Sound", 16, "#BBAEFF"));
-        AddButtons(
-            MakeButton("− Volume", () => PressMediaKey(0xAE)),
-            MakeButton("+ Volume", () => PressMediaKey(0xAF)),
-            MakeButton("Mute / Unmute", () => PressMediaKey(0xAD), true));
-        ContentPanel.Children.Add(Label("Windows quick settings", 16, "#BBAEFF"));
-        AddButtons(
-            MakeButton("Sound", () => Launch("ms-settings:sound")),
-            MakeButton("Display", () => Launch("ms-settings:display")),
-            MakeButton("Wi-Fi", () => Launch("ms-settings:network-wifi")),
-            MakeButton("Bluetooth", () => Launch("ms-settings:bluetooth")),
-            MakeButton("Power", () => Launch("ms-settings:powersleep")),
-            MakeButton("Night light", () => Launch("ms-settings:nightlight")));
-        AddButtons(
-            MakeButton("Task Manager", () => Launch("taskmgr.exe")),
-            MakeButton("Windows Settings", () => Launch("ms-settings:")));
-        ContentPanel.Children.Add(Label("Hardware-specific options (such as monitor brightness) open Windows Settings instead of using unreliable hardware controls.", 12, "#9EABCD"));
+        Add(Section("Sound"),
+            Wrap(Btn("Volume −", () => PressMediaKey(0xAE)), Btn("Volume +", () => PressMediaKey(0xAF)),
+                 Btn("Mute", () => PressMediaKey(0xAD))));
+        Add(Section("Windows settings"),
+            Wrap(Btn("Wi-Fi", () => Launch("ms-settings:network-wifi")), Btn("Bluetooth", () => Launch("ms-settings:bluetooth")),
+                 Btn("Display", () => Launch("ms-settings:display")), Btn("Night light", () => Launch("ms-settings:nightlight")),
+                 Btn("Sound", () => Launch("ms-settings:sound")), Btn("Power", () => Launch("ms-settings:powersleep")),
+                 Btn("All settings", () => Launch("ms-settings:"))));
     }
 
-    // ── Focus sessions ──────────────────────────────────────────────────────
-    private void BuildFocus()
-    {
-        ContentPanel.Children.Add(Label(_app.Clock.FocusIsBreak ? "Short break" : "Deep work session", 16, "#BBAEFF"));
-        _focusDisplay = ClockLabel(Format(_app.Clock.FocusRemaining));
-        ContentPanel.Children.Add(_focusDisplay);
-        AddButtons(
-            MakeButton(_app.Clock.FocusRunning ? "Pause session" : "Start session", () =>
-            { _app.Clock.ToggleFocus(); ShowTool("Focus"); }, true),
-            MakeButton("Reset", () => { _app.Clock.ResetFocus(); ShowTool("Focus"); }),
-            MakeButton("Switch focus / break", () => { _app.Clock.SwitchFocusMode(); ShowTool("Focus"); }));
-        _sessionStats = Label($"Completed focus sessions: {_app.Clock.CompletedFocusSessions}", 13, "#BBAEFF");
-        ContentPanel.Children.Add(_sessionStats);
-        ContentPanel.Children.Add(Label("Custom durations", 13));
-        var focusInput = Input(_app.Clock.FocusMinutes.ToString());
-        var breakInput = Input(_app.Clock.BreakMinutes.ToString());
-        ContentPanel.Children.Add(Label("Work minutes (1–120)", 12)); ContentPanel.Children.Add(focusInput);
-        ContentPanel.Children.Add(Label("Break minutes (1–60)", 12)); ContentPanel.Children.Add(breakInput);
-        AddButtons(MakeButton("Save durations", () =>
-        {
-            if (!int.TryParse(focusInput.Text, out int focus) || focus is < 1 or > 120 ||
-                !int.TryParse(breakInput.Text, out int rest) || rest is < 1 or > 60)
-            { Error("Enter work minutes 1–120 and break minutes 1–60."); return; }
-            _app.State.FocusMinutes = focus; _app.State.BreakMinutes = rest;
-            _app.Clock.UpdateFocusDurations(focus, rest);
-            _app.Save(); ShowTool("Focus");
-        }, true));
-        ContentPanel.Children.Add(Label("When a session ends, Floatly notifies you and prepares the next focus/break period. Timers work while the panel is hidden.", 12, "#A8B2CC"));
-    }
-
+    // ── Window ──────────────────────────────────────────────────────────────
     private void Header_Drag(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState == MouseButtonState.Pressed) DragMove();
@@ -703,7 +830,7 @@ public partial class ToolWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         SavePendingNotes();
-        _noteAutosave.Stop();
+        _noteAutosave.Stop(); _toastTimer.Stop();
         _app.Clock.Changed -= UpdateClocks;
         base.OnClosed(e);
     }

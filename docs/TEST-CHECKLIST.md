@@ -8,7 +8,8 @@
 
 ## Overlay
 - [ ] Floatly button appears after launch
-- [ ] Click expands five tools; More shows the next five
+- [ ] Click opens the ring with all ten tools; Esc or a click outside closes it
+- [ ] Button stretches on press and springs back; Reduce motion turns all animation off
 - [ ] Central button collapses the menu
 - [ ] Drag button to both sides; restart preserves its location
 - [ ] Menu remains inside work area on main monitor

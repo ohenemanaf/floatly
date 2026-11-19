@@ -4,30 +4,96 @@
         Title="Floatly Floating Button"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
-        ShowActivated="False" Width="78" Height="78" WindowStartupLocation="Manual">
+        ShowActivated="False" Width="92" Height="92" WindowStartupLocation="Manual"
+        FontFamily="{StaticResource AppFont}">
   <Canvas x:Name="Surface" Background="{x:Null}">
-    <Border x:Name="Bubble" Width="64" Height="64" CornerRadius="32"
-            Canvas.Left="7" Canvas.Top="7"
-            PreviewMouseLeftButtonDown="Bubble_Down"
-            PreviewMouseMove="Bubble_Move"
-            PreviewMouseLeftButtonUp="Bubble_Up"
-            MouseRightButtonUp="Bubble_RightClick"
-            Cursor="Hand" ToolTip="Floatly • Click to open • Drag to move • Right-click for options">
-      <Border.Background>
-        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-          <GradientStop Color="#B5A5FF" Offset="0"/>
-          <GradientStop Color="#7461EB" Offset="0.7"/>
-          <GradientStop Color="#4F3AC5" Offset="1"/>
-        </LinearGradientBrush>
-      </Border.Background>
-      <Border.Effect>
-        <DropShadowEffect Color="#6553DD" BlurRadius="22" ShadowDepth="4" Opacity="0.68"/>
-      </Border.Effect>
-      <Grid>
-        <Ellipse Width="43" Height="43" Stroke="#AAFFFFFF" StrokeThickness="1.4" Opacity="0.85"/>
-        <TextBlock Text="✦" FontSize="27" Foreground="White" FontFamily="Segoe UI Symbol"
-                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+    <!-- Ring menu: a frosted disc with the ten tools around the button. -->
+    <Grid x:Name="MenuHost" Width="340" Height="340" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+      <Grid.RenderTransform><ScaleTransform x:Name="MenuScale"/></Grid.RenderTransform>
+      <Ellipse Margin="16,22,16,10" Fill="#8C000000" IsHitTestVisible="False">
+        <Ellipse.Effect><BlurEffect Radius="22"/></Ellipse.Effect>
+      </Ellipse>
+      <Grid x:Name="MenuDisc" Margin="10" MouseLeftButtonUp="Disc_Click">
+        <Grid.Clip><EllipseGeometry Center="160,160" RadiusX="160" RadiusY="160"/></Grid.Clip>
+        <!-- Blurred snapshot of whatever is behind the menu; taken when it opens. -->
+        <Image x:Name="Backdrop" Stretch="Fill" Margin="-24">
+          <Image.Effect><BlurEffect Radius="30" KernelType="Gaussian" RenderingBias="Performance"/></Image.Effect>
+        </Image>
+        <Ellipse x:Name="Tint" Fill="#A6131622"/>
+        <Ellipse IsHitTestVisible="False">
+          <Ellipse.Fill>
+            <LinearGradientBrush StartPoint="0.2,0" EndPoint="0.7,1">
+              <GradientStop Color="#38FFFFFF" Offset="0"/>
+              <GradientStop Color="#0AFFFFFF" Offset="0.45"/>
+              <GradientStop Color="#00FFFFFF" Offset="1"/>
+            </LinearGradientBrush>
+          </Ellipse.Fill>
+        </Ellipse>
+        <Ellipse StrokeThickness="1.3" IsHitTestVisible="False">
+          <Ellipse.Stroke>
+            <LinearGradientBrush StartPoint="0.15,0" EndPoint="0.85,1">
+              <GradientStop Color="#B0FFFFFF" Offset="0"/>
+              <GradientStop Color="#22FFFFFF" Offset="0.5"/>
+              <GradientStop Color="#66FFFFFF" Offset="1"/>
+            </LinearGradientBrush>
+          </Ellipse.Stroke>
+        </Ellipse>
       </Grid>
-    </Border>
+      <Canvas x:Name="Items"/>
+    </Grid>
+
+    <!-- The floating button. Drawn on a fixed 64x64 design grid and scaled to the chosen size. -->
+    <Grid x:Name="Bubble" Width="64" Height="64" Canvas.Left="14" Canvas.Top="14" Background="Transparent"
+          RenderTransformOrigin="0.5,0.5" Cursor="Hand"
+          PreviewMouseLeftButtonDown="Bubble_Down" PreviewMouseMove="Bubble_Move"
+          PreviewMouseLeftButtonUp="Bubble_Up" MouseRightButtonUp="Bubble_RightClick"
+          MouseEnter="Bubble_Enter" MouseLeave="Bubble_Leave">
+      <Grid.RenderTransform><ScaleTransform x:Name="BubbleScale"/></Grid.RenderTransform>
+      <Viewbox>
+        <Grid Width="64" Height="64">
+          <Ellipse Margin="6,10,6,0" Fill="#80000000" IsHitTestVisible="False">
+            <Ellipse.Effect><BlurEffect Radius="12"/></Ellipse.Effect>
+          </Ellipse>
+          <Ellipse x:Name="OrbBase"/>
+          <!-- Slow-turning highlight that makes the surface look fluid while hovered or open. -->
+          <Grid IsHitTestVisible="False">
+            <Grid.Clip><EllipseGeometry Center="32,32" RadiusX="32" RadiusY="32"/></Grid.Clip>
+            <Ellipse Width="46" Height="30" Margin="-6,26,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
+                     RenderTransformOrigin="0.83,0.2">
+              <Ellipse.RenderTransform><RotateTransform x:Name="Caustic"/></Ellipse.RenderTransform>
+              <Ellipse.Fill>
+                <RadialGradientBrush>
+                  <GradientStop Color="#55FFFFFF" Offset="0"/>
+                  <GradientStop Color="#00FFFFFF" Offset="1"/>
+                </RadialGradientBrush>
+              </Ellipse.Fill>
+            </Ellipse>
+          </Grid>
+          <Ellipse Margin="10,4,10,30" IsHitTestVisible="False">
+            <Ellipse.Fill>
+              <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
+                <GradientStop Color="#B8FFFFFF" Offset="0"/>
+                <GradientStop Color="#00FFFFFF" Offset="1"/>
+              </LinearGradientBrush>
+            </Ellipse.Fill>
+          </Ellipse>
+          <Ellipse StrokeThickness="1.3" IsHitTestVisible="False">
+            <Ellipse.Stroke>
+              <LinearGradientBrush StartPoint="0.15,0" EndPoint="0.85,1">
+                <GradientStop Color="#E6FFFFFF" Offset="0"/>
+                <GradientStop Color="#30FFFFFF" Offset="0.5"/>
+                <GradientStop Color="#99FFFFFF" Offset="1"/>
+              </LinearGradientBrush>
+            </Ellipse.Stroke>
+          </Ellipse>
+          <Path Width="22" Height="22" Stretch="Uniform" Fill="White" IsHitTestVisible="False"
+                RenderTransformOrigin="0.5,0.5"
+                Data="M12 2 C12.7 8 16 11.3 22 12 C16 12.7 12.7 16 12 22 C11.3 16 8 12.7 2 12 C8 11.3 11.3 8 12 2 Z">
+            <Path.RenderTransform><RotateTransform x:Name="GlyphTurn"/></Path.RenderTransform>
+          </Path>
+        </Grid>
+      </Viewbox>
+    </Grid>
   </Canvas>
 </Window>
