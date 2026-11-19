@@ -14,4 +14,8 @@
     <ApplicationIcon>Assets\Floatly.ico</ApplicationIcon>
     <Version>1.0.0</Version>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Manrope (SIL Open Font License, see Assets/Fonts/OFL.txt), compiled into the app. -->
+    <Resource Include="Assets\Fonts\*.ttf" />
+  </ItemGroup>
 </Project>
