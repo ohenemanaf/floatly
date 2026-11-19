@@ -66,12 +66,24 @@ Or double-click the scripts in the project folder:
 | Script | What it does |
 |---|---|
 | `01-BUILD-AND-RUN.bat` | Builds Floatly and starts it |
-| `02-CREATE-PORTABLE-EXE.bat` | Builds a single self-contained `Floatly.exe` in `out\Floatly-win-x64` |
+| `02-CREATE-PORTABLE-EXE.bat` | Builds a single self-contained `Floatly.exe` (about 72 MB) in `out\Floatly-win-x64`; the other PC does not need .NET installed |
 | `03-RUN-LOGIC-TESTS.bat` | Runs the calculator, storage and timer checks |
 | `04-INSTALL-LOCALLY.bat` | Copies the portable build to your user Apps folder and adds a Start menu shortcut (no admin rights needed) |
 | `05-UNINSTALL-LOCAL.bat` | Removes that install and its startup entry; your notes and tasks are kept |
 
 **Start with Windows** only works from the published `.exe`, not from a debug build. Run `02` and `04` first, then switch it on in Settings.
+
+## Install on another PC
+
+Floatly is not code-signed, so Windows treats a downloaded copy as an unknown app. To set it up on someone else's PC, zip the `out\Floatly-win-x64` folder, send it, and have them:
+
+1. Right-click the downloaded zip, choose **Properties**, tick **Unblock**, then **OK**. Do this before extracting; it removes the "downloaded from the internet" mark that triggers most warnings.
+2. Extract the zip and double-click `Floatly.exe`.
+3. If a blue **Windows protected your PC** screen appears, click **More info**, then **Run anyway**.
+4. Only if **Smart App Control** still blocks it: open Windows Security, go to App & browser control, then Smart App Control, and set it to **Off**.
+
+> [!WARNING]
+> On most Windows 11 versions, Smart App Control **cannot be turned back on without resetting Windows**, and turning it off also stops it checking every other unknown program. Only do step 4 if you understand and accept that.
 
 ## Your data
 

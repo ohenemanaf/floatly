@@ -10,7 +10,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-dotnet publish "Floatly.App\Floatly.App.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "out\Floatly-win-x64"
+dotnet publish "Floatly.App\Floatly.App.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o "out\Floatly-win-x64"
 if errorlevel 1 (
   echo PUBLISH FAILED. Please copy the error text.
   pause
